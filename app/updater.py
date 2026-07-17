@@ -144,14 +144,17 @@ echo [%date% %time%] Debut mise a jour, attente fin du process %PIDTOWAIT% > "%L
 
 set "WAITCOUNT=0"
 :waitloop
-tasklist /FI "PID eq %PIDTOWAIT%" | find "%PIDTOWAIT%" >nul
-if not errorlevel 1 (
+set "PIDFOUND="
+for /f "tokens=2 delims=," %%p in ('tasklist /FI "PID eq %PIDTOWAIT%" /FO CSV /NH 2^>nul') do (
+    if "%%~p"=="%PIDTOWAIT%" set "PIDFOUND=1"
+)
+if defined PIDFOUND (
     set /a WAITCOUNT+=1
     if !WAITCOUNT! GEQ 30 (
         echo [%date% %time%] Timeout apres 30s d'attente - le PID %PIDTOWAIT% semble toujours actif ou reutilise, on continue quand meme >> "%LOGFILE%"
         goto afterwait
     )
-    timeout /t 1 /nobreak >nul
+    ping -n 2 127.0.0.1 >nul
     goto waitloop
 )
 :afterwait
@@ -174,7 +177,7 @@ for /L %%i in (1,1,10) do (
             )
         ) else (
             echo [%date% %time%] Tentative %%i echouee, fichier encore verrouille >> "%LOGFILE%"
-            timeout /t 1 /nobreak >nul
+            ping -n 2 127.0.0.1 >nul
         )
     )
 )
