@@ -706,7 +706,16 @@ class MainWindow(QMainWindow):
             pid=os.getpid(),
         )
         launch_swap_and_exit(bat_path)
-        QApplication.instance().quit()
+        # QApplication.quit() ne fait que planifier la fin de la boucle
+        # d'événements Qt — rien ne garantit que le process meure vite
+        # (thread résiduel, event loop qui met du temps à sortir). Le
+        # script de remplacement attend justement la disparition de ce
+        # PID exact : une sortie tardive ou bloquée laisse sa boucle
+        # d'attente tourner indéfiniment. os._exit() termine le process
+        # immédiatement, sans passer par un nettoyage Qt qui pourrait
+        # traîner — sûr ici puisque toute session DB a déjà été fermée
+        # avant l'affichage du dialogue de mise à jour.
+        os._exit(0)
 
     # ------------------------------------------------------------------
     # Navigation
