@@ -186,11 +186,13 @@ if "!SWAPPED!"=="0" (
     echo [%date% %time%] Abandon apres 10 tentatives - mise a jour non appliquee >> "%LOGFILE%"
 )
 
-REM Laisse le temps a Windows/l'antivirus de finir de liberer le fichier
-REM fraichement ecrit avant de le relancer - un antivirus scannant l'exe
-REM juste apres son ecriture peut le garder brievement verrouille, ce qui
-REM peut faire echouer le chargement au tout premier lancement.
-ping -n 3 127.0.0.1 >nul
+REM Laisse le temps a Windows de finir de liberer le fichier fraichement
+REM ecrit avant de le relancer - un lancement trop rapide apres le move
+REM peut echouer au chargement (DLL Python extraite par le bootloader
+REM PyInstaller pas encore totalement accessible), meme si le fichier
+REM lui-meme n'est pas corrompu. Le delai precedent (~2s) s'est avere
+REM insuffisant en pratique ; porte a ~8s.
+ping -n 9 127.0.0.1 >nul
 if exist "%CUREXE%.old" del /Q "%CUREXE%.old" >> "%LOGFILE%" 2>&1
 
 start "" "%CUREXE%"
