@@ -194,9 +194,16 @@ start "" "%CUREXE%"
 def launch_swap_and_exit(bat_path: Path) -> None:
     """Lance le script de remplacement sans fenêtre visible, détaché du
     process courant. L'appelant doit quitter l'app immédiatement après.
+
+    CREATE_NO_WINDOW seul suffit à empêcher toute fenêtre de console —
+    le combiner avec DETACHED_PROCESS peut, sur certaines configurations
+    Windows, provoquer l'allocation d'une nouvelle fenêtre de console
+    visible malgré CREATE_NO_WINDOW (comportement non garanti par l'API
+    Win32 quand les deux flags sont combinés), ce qui explique la fenêtre
+    noire observée en pratique.
     """
     subprocess.Popen(
         ["cmd.exe", "/c", str(bat_path)],
-        creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+        creationflags=CREATE_NO_WINDOW,
         close_fds=True,
     )
