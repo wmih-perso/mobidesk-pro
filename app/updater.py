@@ -169,7 +169,6 @@ for /L %%i in (1,1,10) do (
             move /Y "%NEWEXE%" "%CUREXE%" >> "%LOGFILE%" 2>&1
             if exist "%CUREXE%" (
                 set "SWAPPED=1"
-                del /Q "%CUREXE%.old" >> "%LOGFILE%" 2>&1
                 echo [%date% %time%] Remplacement reussi >> "%LOGFILE%"
             ) else (
                 echo [%date% %time%] Echec copie nouvel exe, restauration >> "%LOGFILE%"
@@ -186,14 +185,17 @@ if "!SWAPPED!"=="0" (
     echo [%date% %time%] Abandon apres 10 tentatives - mise a jour non appliquee >> "%LOGFILE%"
 )
 
+REM Le fichier .old n'est volontairement plus supprime ici : une tentative
+REM de suppression ayant echoue ("Acces refuse") a ete observee en pratique
+REM juste apres un remplacement pourtant reussi, immediatement suivie d'un
+REM arret premature du script cmd.exe avant meme d'atteindre le "start"
+REM ci-dessous - Windows semble parfois interrompre tout le processus
+REM batch en reaction a cet echec sur un fichier de Program Files. Le
+REM fichier .old restant est inoffensif (ecrase au prochain remplacement).
+REM
 REM Laisse le temps a Windows de finir de liberer le fichier fraichement
-REM ecrit avant de le relancer - un lancement trop rapide apres le move
-REM peut echouer au chargement (DLL Python extraite par le bootloader
-REM PyInstaller pas encore totalement accessible), meme si le fichier
-REM lui-meme n'est pas corrompu. Le delai precedent (~2s) s'est avere
-REM insuffisant en pratique ; porte a ~8s.
+REM ecrit avant de le relancer.
 ping -n 9 127.0.0.1 >nul
-if exist "%CUREXE%.old" del /Q "%CUREXE%.old" >> "%LOGFILE%" 2>&1
 
 start "" "%CUREXE%"
 
