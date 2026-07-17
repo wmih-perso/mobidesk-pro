@@ -706,6 +706,18 @@ class MainWindow(QMainWindow):
             pid=os.getpid(),
         )
         launch_swap_and_exit(bat_path)
+        # Le script de remplacement ne relance plus l'app automatiquement
+        # (un relancement immédiat après le remplacement échouait de façon
+        # répétée avec "Failed to load Python DLL" sur certains postes,
+        # sans cause isolée malgré plusieurs délais testés) — on prévient
+        # donc l'utilisateur ici, avant la fermeture, qu'il devra relancer
+        # lui-même l'application dans quelques instants.
+        QMessageBox.information(
+            self,
+            "Mise à jour",
+            "La mise à jour va être installée. L'application va se fermer — "
+            "veuillez la relancer depuis son raccourci dans quelques secondes.",
+        )
         # QApplication.quit() ne fait que planifier la fin de la boucle
         # d'événements Qt — rien ne garantit que le process meure vite
         # (thread résiduel, event loop qui met du temps à sortir). Le

@@ -193,11 +193,17 @@ REM ci-dessous - Windows semble parfois interrompre tout le processus
 REM batch en reaction a cet echec sur un fichier de Program Files. Le
 REM fichier .old restant est inoffensif (ecrase au prochain remplacement).
 REM
-REM Laisse le temps a Windows de finir de liberer le fichier fraichement
-REM ecrit avant de le relancer.
-ping -n 9 127.0.0.1 >nul
-
-start "" "%CUREXE%"
+REM Le relancement automatique de l'exe fraichement remplace echouait de
+REM facon repetee ("Failed to load Python DLL") meme apres plusieurs
+REM secondes d'attente, alors qu'un lancement manuel differe par
+REM l'utilisateur fonctionne toujours - la cause exacte (verrou residuel,
+REM antivirus) n'a pas pu etre isolee malgre plusieurs tentatives de
+REM delai, et une MessageBox PowerShell s'est averee tout aussi peu
+REM fiable pour notifier l'utilisateur dans ce contexte. On abandonne
+REM donc tout relancement/notification automatique : la mise a jour est
+REM installee silencieusement, l'utilisateur doit relancer lui-meme
+REM l'application (comportement deja documente dans le README).
+echo [%date% %time%] Mise a jour terminee - relancement manuel requis >> "%LOGFILE%"
 
 (goto) 2>nul & del "%~f0"
 """
