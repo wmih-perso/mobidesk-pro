@@ -75,81 +75,43 @@ désinstallations de l'application, contrairement à un stockage dans le
 dossier d'installation (qui peut être en lecture seule, sur une clé USB
 protégée en écriture, ou supprimé lors d'une mise à jour).
 
-## Générer un exécutable Windows (.exe)
+## Installer l'application
 
-Pour installer l'application sur un autre PC Windows (sans avoir Python
-installé dessus), génère un exécutable autonome avec PyInstaller.
+**Sur le PC de destination**, télécharge `MobiDeskProSetup.exe` depuis la
+dernière [Release GitHub](https://github.com/wmih-perso/mobidesk-pro/releases)
+et exécute-le. C'est le seul fichier à distribuer aux utilisateurs finaux.
 
-**Sur la machine de développement** (celle-ci) :
+L'installeur (une élévation UAC à accepter, une seule fois) installe dans
+`Program Files`, crée les raccourcis Bureau/Menu Démarrer, et permet une
+désinstallation propre via le Panneau de configuration.
 
-```powershell
-build_windows.bat
-```
-
-Ce script installe les dépendances, exécute les tests, puis génère
-`dist\MobiDeskPro.exe` — un unique fichier d'environ 55 Mo qui contient
-Python, PySide6 et toute l'application.
-
-Deux formes de distribution sont disponibles à chaque release :
-
-- **`MobiDeskProSetup.exe`** (recommandé pour toute nouvelle installation) —
-  un vrai installeur Windows (voir section suivante) : installation dans
-  `Program Files`, raccourcis Bureau/Menu Démarrer, désinstallation propre
-  via le Panneau de configuration.
-- **`MobiDeskPro.exe`** — l'exécutable brut, portable, sans installation.
-  Conservé pour compatibilité avec les postes déjà en place et pour un usage
-  ponctuel (clé USB, dépannage).
-
-**Sur le PC de destination (méthode portable) :**
-
-1. Copie uniquement `MobiDeskPro.exe` (par clé USB, réseau partagé, etc.)
-   — aucune installation de Python ni d'autre logiciel n'est nécessaire.
-2. Double-clique dessus pour lancer l'application.
-3. Au premier lancement, l'application crée automatiquement son dossier de
-   données dans `C:\Users\<utilisateur>\AppData\Local\MobiDeskPro\data\`.
-
-Chaque PC aura donc sa **propre base de données locale**, indépendante des
+Chaque PC aura sa **propre base de données locale**, indépendante des
 autres — il n'y a pas de synchronisation entre plusieurs postes. Pour
-transférer les données d'un PC à un autre, copie simplement le fichier
-`stock.db` de ce dossier vers le même emplacement sur le nouveau poste.
+transférer les données d'un PC à un autre, copie le fichier `stock.db`
+(voir "Emplacement des données" ci-dessous) vers le même emplacement sur
+le nouveau poste.
 
-## Générer l'installeur Windows (Inno Setup)
-
-Pour une installation classique (raccourcis, désinstallation propre), un
-script [Inno Setup](https://jrsoftware.org/isinfo.php) génère
-`MobiDeskProSetup.exe` à partir de l'exécutable déjà buildé.
-
-**Prérequis** : installer [Inno Setup 6](https://jrsoftware.org/isdl.php)
-sur la machine de développement (une seule fois).
+## Générer l'exécutable et l'installeur (machine de développement)
 
 ```powershell
 build_windows.bat
 build_installer.bat
 ```
 
-`build_installer.bat` lit automatiquement la version depuis
-`app/version.py` et produit `dist\MobiDeskProSetup.exe`.
+`build_windows.bat` installe les dépendances, exécute les tests, puis
+génère `dist\MobiDeskPro.exe` (~55 Mo, contient Python/PySide6/l'app).
 
-L'installeur demande les droits administrateur **une seule fois**, à
-l'installation initiale — les mises à jour automatiques déclenchées
-ensuite depuis l'application ne redemandent jamais cette élévation, car le
-dossier d'installation est configuré pour rester modifiable par
-l'utilisateur courant.
+`build_installer.bat` (nécessite [Inno Setup 6](https://jrsoftware.org/isdl.php)
+installé une fois sur cette machine) lit la version depuis
+`app/version.py` et génère `dist\MobiDeskProSetup.exe` à partir de l'exe
+précédent — **c'est ce fichier qu'il faut distribuer**, pas
+`MobiDeskPro.exe` directement.
 
-### Transition depuis une installation portable existante
-
-Un poste qui utilisait déjà `MobiDeskPro.exe` en mode portable ne migre pas
-automatiquement vers l'installeur (la mise à jour automatique remplace
-l'exécutable à son emplacement actuel, elle ne le déplace jamais). Pour
-passer à l'installeur sur un poste déjà en place :
-
-1. Fermer l'application.
-2. Télécharger et exécuter `MobiDeskProSetup.exe` (une seule invite
-   d'élévation à accepter).
-3. Supprimer manuellement l'ancien exécutable portable si souhaité.
-
-Les données (`stock.db`) ne sont jamais affectées par cette transition,
-quel que soit l'emplacement de l'exécutable.
+`MobiDeskPro.exe` reste nécessaire en interne : c'est ce fichier exact,
+une fois installé dans `Program Files`, que le mécanisme de mise à jour
+automatique télécharge et remplace en place (voir section suivante) — mais
+il n'est jamais destiné à être téléchargé ou lancé directement par un
+utilisateur.
 
 ## Mises à jour automatiques
 
@@ -181,9 +143,10 @@ sans authentification).
 
    **Important** : l'asset portable doit s'appeler exactement
    `MobiDeskPro.exe`, sinon la mise à jour automatique ne le retrouvera
-   pas. Les deux fichiers doivent être attachés à chaque release — l'exe
-   portable reste nécessaire pour que les postes déjà installés en mode
-   portable continuent de recevoir les mises à jour automatiques.
+   pas. Les deux fichiers doivent être attachés à chaque release :
+   `MobiDeskProSetup.exe` est celui à partager avec les utilisateurs,
+   `MobiDeskPro.exe` reste un détail interne consommé silencieusement par
+   le mécanisme de mise à jour automatique.
 
 Chaque client installé peut alors cliquer sur "Vérifier les mises à jour"
 pour télécharger et installer automatiquement la nouvelle version — le
