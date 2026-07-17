@@ -45,6 +45,7 @@ from app.services import (
     list_movements,
     sum_profit_cents,
 )
+from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.display_dialog import DisplayDialog
 from app.ui.profit_tab import ProfitTab
 from app.ui.sidebar import Sidebar
@@ -547,6 +548,9 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(self._build_database_section())
 
         card_layout.addSpacing(12)
+        card_layout.addWidget(self._build_security_section())
+
+        card_layout.addSpacing(12)
         card_layout.addWidget(self._build_update_section())
 
         layout.addWidget(card)
@@ -593,6 +597,33 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QDesktopServices
 
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(db_path.parent)))
+
+    def _build_security_section(self) -> QWidget:
+        section = QFrame()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(8)
+
+        label = QLabel("Sécurité")
+        label.setStyleSheet("font-weight: 700;")
+        section_layout.addWidget(label)
+
+        row = QHBoxLayout()
+        change_password_button = QPushButton("🔒  Changer le mot de passe")
+        change_password_button.setObjectName("SecondaryButton")
+        change_password_button.clicked.connect(self._on_change_password)
+        row.addWidget(change_password_button)
+        row.addStretch()
+        section_layout.addLayout(row)
+
+        return section
+
+    def _on_change_password(self) -> None:
+        dialog = ChangePasswordDialog()
+        if dialog.exec() == ChangePasswordDialog.DialogCode.Accepted:
+            QMessageBox.information(
+                self, "Mot de passe", "Le mot de passe a été changé avec succès."
+            )
 
     def _build_update_section(self) -> QWidget:
         section = QFrame()

@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.database import init_engine
+from app.ui.login_dialog import LoginDialog
 from app.ui.main_window import MainWindow
 
 UI_DIR = Path(__file__).resolve().parent / "app" / "ui"
@@ -38,6 +39,10 @@ def main() -> int:
     # plateformes.
     app.setStyle("Fusion")
     app.setStyleSheet(_load_stylesheet())
+
+    login = LoginDialog()
+    if login.exec() != LoginDialog.DialogCode.Accepted:
+        return 0
 
     window = MainWindow()
     window.show()

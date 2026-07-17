@@ -29,6 +29,19 @@ python main.py
 
 La base de données SQLite est créée automatiquement au premier lancement.
 
+## Connexion
+
+L'application demande un mot de passe au démarrage (compte unique partagé,
+pas de gestion multi-utilisateurs). Le mot de passe par défaut à la
+première installation est `mobidesk2026` — à changer immédiatement depuis
+**Paramètres → Sécurité → Changer le mot de passe**.
+
+Le mot de passe n'est jamais stocké en clair (hash salé dans
+`auth.json`, à côté de `stock.db`). **En cas d'oubli**, il n'existe pas de
+récupération intégrée : supprimer le fichier `auth.json` dans le dossier
+de données (visible depuis Paramètres → "Ouvrir le dossier") réinitialise
+au mot de passe par défaut, sans toucher aux données de stock.
+
 ## Lancement des tests
 
 ```powershell
