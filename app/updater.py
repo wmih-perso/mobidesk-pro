@@ -120,16 +120,27 @@ def download_update(
 def build_swap_script(new_exe: Path, current_exe: Path, pid: int) -> Path:
     """Génère un .bat qui attend la fin du process courant, remplace l'exe,
     relance l'app, puis s'auto-supprime. Renvoie le chemin du .bat.
+
+    Le remplacement retente plusieurs fois avant d'abandonner : même après
+    la disparition du PID de `tasklist`, Windows peut garder le fichier
+    verrouillé une fraction de seconde de plus (flush disque, antivirus
+    scannant l'exe fraîchement écrit). Toute erreur est journalisée dans
+    update_log.txt (à côté du script) pour pouvoir diagnostiquer un échec
+    silencieux — les versions précédentes redirigeaient tout vers `nul`.
     """
     script_dir = Path(tempfile.gettempdir()) / "MobiDeskPro_update"
     script_dir.mkdir(parents=True, exist_ok=True)
     bat_path = script_dir / "apply_update.bat"
+    log_path = script_dir / "update_log.txt"
 
     bat_content = f"""@echo off
-setlocal
+setlocal enabledelayedexpansion
 set "NEWEXE={new_exe}"
 set "CUREXE={current_exe}"
 set "PIDTOWAIT={pid}"
+set "LOGFILE={log_path}"
+
+echo [%date% %time%] Debut mise a jour, attente fin du process %PIDTOWAIT% > "%LOGFILE%"
 
 :waitloop
 tasklist /FI "PID eq %PIDTOWAIT%" | find "%PIDTOWAIT%" >nul
@@ -138,10 +149,32 @@ if not errorlevel 1 (
     goto waitloop
 )
 
-timeout /t 1 /nobreak >nul
-move /Y "%CUREXE%" "%CUREXE%.old" >nul
-move /Y "%NEWEXE%" "%CUREXE%" >nul
-del /Q "%CUREXE%.old" >nul 2>&1
+echo [%date% %time%] Process termine, tentative de remplacement >> "%LOGFILE%"
+
+set "SWAPPED=0"
+for /L %%i in (1,1,10) do (
+    if "!SWAPPED!"=="0" (
+        move /Y "%CUREXE%" "%CUREXE%.old" >> "%LOGFILE%" 2>&1
+        if exist "%CUREXE%.old" (
+            move /Y "%NEWEXE%" "%CUREXE%" >> "%LOGFILE%" 2>&1
+            if exist "%CUREXE%" (
+                set "SWAPPED=1"
+                del /Q "%CUREXE%.old" >> "%LOGFILE%" 2>&1
+                echo [%date% %time%] Remplacement reussi >> "%LOGFILE%"
+            ) else (
+                echo [%date% %time%] Echec copie nouvel exe, restauration >> "%LOGFILE%"
+                move /Y "%CUREXE%.old" "%CUREXE%" >> "%LOGFILE%" 2>&1
+            )
+        ) else (
+            echo [%date% %time%] Tentative %%i echouee, fichier encore verrouille >> "%LOGFILE%"
+            timeout /t 1 /nobreak >nul
+        )
+    )
+)
+
+if "!SWAPPED!"=="0" (
+    echo [%date% %time%] Abandon apres 10 tentatives - mise a jour non appliquee >> "%LOGFILE%"
+)
 
 start "" "%CUREXE%"
 
