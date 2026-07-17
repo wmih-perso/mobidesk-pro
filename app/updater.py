@@ -195,15 +195,20 @@ def launch_swap_and_exit(bat_path: Path) -> None:
     """Lance le script de remplacement sans fenêtre visible, détaché du
     process courant. L'appelant doit quitter l'app immédiatement après.
 
-    CREATE_NO_WINDOW seul suffit à empêcher toute fenêtre de console —
-    le combiner avec DETACHED_PROCESS peut, sur certaines configurations
-    Windows, provoquer l'allocation d'une nouvelle fenêtre de console
-    visible malgré CREATE_NO_WINDOW (comportement non garanti par l'API
-    Win32 quand les deux flags sont combinés), ce qui explique la fenêtre
-    noire observée en pratique.
+    L'app packagée (PyInstaller, console=False) n'a elle-même aucune
+    console attachée. Dans ce contexte, CREATE_NO_WINDOW seul ne suffit
+    pas toujours à empêcher Windows de créer une nouvelle fenêtre de
+    console visible pour le processus enfant. On force donc explicitement
+    la fenêtre à démarrer masquée via STARTUPINFO/SW_HIDE, en plus de
+    CREATE_NO_WINDOW — combinaison plus fiable dans ce cas précis.
     """
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+
     subprocess.Popen(
         ["cmd.exe", "/c", str(bat_path)],
         creationflags=CREATE_NO_WINDOW,
+        startupinfo=startupinfo,
         close_fds=True,
     )
