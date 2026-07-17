@@ -15,12 +15,17 @@ ASSET_NAME = "MobiDeskPro.exe"
 
 
 def parse_version(value: str) -> tuple[int, int, int]:
-    """Parse « v1.2.3 » ou « 1.2.3 » en (1, 2, 3). Lève ValueError si invalide."""
+    """Parse « v1.2.3 », « 1.2.3 », « v1.0 » ou « v1 » en un triplet (majeur,
+    mineur, patch) — les segments manquants sont complétés par des zéros
+    (« v1.0 » devient (1, 0, 0)), pour tolérer des tags moins stricts que
+    le format x.y.z habituel. Lève ValueError si invalide."""
     cleaned = value.strip().lstrip("vV")
     parts = cleaned.split(".")
-    if len(parts) != 3:
+    if not 1 <= len(parts) <= 3:
         raise ValueError(f"Format de version invalide : {value!r}")
-    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+    numbers = [int(part) for part in parts]
+    numbers += [0] * (3 - len(numbers))
+    return tuple(numbers)  # type: ignore[return-value]
 
 
 def is_newer(remote: str, local: str = APP_VERSION) -> bool:

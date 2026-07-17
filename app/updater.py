@@ -142,14 +142,21 @@ set "LOGFILE={log_path}"
 
 echo [%date% %time%] Debut mise a jour, attente fin du process %PIDTOWAIT% > "%LOGFILE%"
 
+set "WAITCOUNT=0"
 :waitloop
 tasklist /FI "PID eq %PIDTOWAIT%" | find "%PIDTOWAIT%" >nul
 if not errorlevel 1 (
+    set /a WAITCOUNT+=1
+    if !WAITCOUNT! GEQ 30 (
+        echo [%date% %time%] Timeout apres 30s d'attente - le PID %PIDTOWAIT% semble toujours actif ou reutilise, on continue quand meme >> "%LOGFILE%"
+        goto afterwait
+    )
     timeout /t 1 /nobreak >nul
     goto waitloop
 )
+:afterwait
 
-echo [%date% %time%] Process termine, tentative de remplacement >> "%LOGFILE%"
+echo [%date% %time%] Process termine ou timeout atteint, tentative de remplacement >> "%LOGFILE%"
 
 set "SWAPPED=0"
 for /L %%i in (1,1,10) do (

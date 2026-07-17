@@ -11,14 +11,26 @@ def test_parse_version_without_prefix():
     assert parse_version("1.2.3") == (1, 2, 3)
 
 
-def test_parse_version_rejects_invalid_format():
+def test_parse_version_pads_missing_minor_and_patch():
+    assert parse_version("v1.0") == (1, 0, 0)
+
+
+def test_parse_version_pads_major_only():
+    assert parse_version("v2") == (2, 0, 0)
+
+
+def test_parse_version_rejects_too_many_segments():
     with pytest.raises(ValueError):
-        parse_version("1.2")
+        parse_version("1.2.3.4")
 
 
 def test_parse_version_rejects_non_numeric():
     with pytest.raises(ValueError):
         parse_version("1.x.3")
+
+
+def test_is_newer_true_with_short_remote_tag():
+    assert is_newer("v1.0", "0.1.4") is True
 
 
 def test_is_newer_true_when_remote_greater():
