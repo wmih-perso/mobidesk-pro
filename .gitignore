@@ -1,0 +1,42 @@
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Base de données et données locales
+data/*.db
+data/*.db-journal
+data/*.sqlite
+backups/*.db
+exports/*.xlsx
+exports/*.pdf
+exports/*.csv
+logs/*.log
+
+# Fichiers sensibles
+.env
+*.secret
+
+# Build / distribution
+build/
+dist/
+*.spec.bak
+installer/Output/
+*.exe
+
+# IDE
+.vscode/
+.idea/
+
+# Divers
+*.tmp
+Thumbs.db
