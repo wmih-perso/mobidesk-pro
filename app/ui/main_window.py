@@ -38,6 +38,8 @@ from app.paths import get_database_path, is_frozen
 from app.period import bounds_for_period
 from app.services import (
     StockError,
+    count_low_stock_displays,
+    count_movements,
     deactivate_display,
     list_displays,
     list_movements,
@@ -113,6 +115,10 @@ class MainWindow(QMainWindow):
         self._page_size = PAGE_SIZE_CHOICES[0]
         self._filtered_displays: list = []
 
+        self._movements_current_page = 1
+        self._movements_page_size = PAGE_SIZE_CHOICES[0]
+        self._movements_total_count = 0
+
         self._build_ui()
         self._start_clock()
         self.refresh()
@@ -175,7 +181,12 @@ class MainWindow(QMainWindow):
         )
         self.search_input.setObjectName("HeaderSearchInput")
         self.search_input.setFixedWidth(360)
-        self.search_input.textChanged.connect(self._on_filters_changed)
+
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(300)
+        self._search_debounce.timeout.connect(self._on_filters_changed)
+        self.search_input.textChanged.connect(lambda: self._search_debounce.start())
         layout.addWidget(self.search_input)
 
         layout.addStretch()
@@ -414,6 +425,65 @@ class MainWindow(QMainWindow):
 
         return bar
 
+    def _build_movements_pagination_bar(self) -> QWidget:
+        bar = QWidget()
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(4, 6, 4, 2)
+        layout.setSpacing(10)
+
+        self.movements_summary_label = QLabel("")
+        self.movements_summary_label.setObjectName("SummaryLabel")
+        layout.addWidget(self.movements_summary_label)
+
+        layout.addStretch()
+
+        page_size_label = QLabel("Par page")
+        page_size_label.setObjectName("SummaryLabel")
+        layout.addWidget(page_size_label)
+
+        self.movements_page_size_combo = QComboBox()
+        self.movements_page_size_combo.addItems([str(n) for n in PAGE_SIZE_CHOICES])
+        self.movements_page_size_combo.currentIndexChanged.connect(
+            self._on_movements_page_size_changed
+        )
+        layout.addWidget(self.movements_page_size_combo)
+
+        self.movements_first_page_button = QPushButton("⏮")
+        self.movements_first_page_button.setObjectName("PageNavButton")
+        self.movements_first_page_button.clicked.connect(
+            lambda: self._go_to_movements_page(1)
+        )
+        layout.addWidget(self.movements_first_page_button)
+
+        self.movements_prev_page_button = QPushButton("‹")
+        self.movements_prev_page_button.setObjectName("PageNavButton")
+        self.movements_prev_page_button.clicked.connect(
+            lambda: self._go_to_movements_page(self._movements_current_page - 1)
+        )
+        layout.addWidget(self.movements_prev_page_button)
+
+        self.movements_page_indicator_label = QLabel("1")
+        self.movements_page_indicator_label.setObjectName("PageIndicator")
+        self.movements_page_indicator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.movements_page_indicator_label.setFixedWidth(32)
+        layout.addWidget(self.movements_page_indicator_label)
+
+        self.movements_next_page_button = QPushButton("›")
+        self.movements_next_page_button.setObjectName("PageNavButton")
+        self.movements_next_page_button.clicked.connect(
+            lambda: self._go_to_movements_page(self._movements_current_page + 1)
+        )
+        layout.addWidget(self.movements_next_page_button)
+
+        self.movements_last_page_button = QPushButton("⏭")
+        self.movements_last_page_button.setObjectName("PageNavButton")
+        self.movements_last_page_button.clicked.connect(
+            lambda: self._go_to_movements_page(self._movements_total_pages())
+        )
+        layout.addWidget(self.movements_last_page_button)
+
+        return bar
+
     def _build_movements_tab(self) -> QWidget:
         container = QFrame()
         container.setObjectName("Card")
@@ -434,7 +504,16 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.movements_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.movements_table)
+        layout.addWidget(self.movements_table, stretch=1)
+
+        self.movements_empty_state = EmptyState(
+            "📋",
+            "Aucun mouvement de stock",
+            "Les entrées et sorties de stock apparaîtront ici.",
+        )
+        layout.addWidget(self.movements_empty_state, stretch=1)
+
+        layout.addWidget(self._build_movements_pagination_bar())
 
         return container
 
@@ -668,7 +747,7 @@ class MainWindow(QMainWindow):
                 only_low_stock=self.low_stock_checkbox.isChecked(),
             )
             total_count = len(all_active)
-            low_stock_count = sum(1 for d in all_active if d.is_low_stock)
+            low_stock_count = count_low_stock_displays(session)
             stock_value = sum(cents_to_da(d.purchase_price_cents) * d.quantity for d in all_active)
 
         self.total_card.set_value(str(total_count))
@@ -765,9 +844,39 @@ class MainWindow(QMainWindow):
         self.displays_table.setItem(row_index, column_index, placeholder)
         self.displays_table.setCellWidget(row_index, column_index, wrapper)
 
+    def _movements_total_pages(self) -> int:
+        if self._movements_total_count == 0:
+            return 1
+        return max(1, -(-self._movements_total_count // self._movements_page_size))
+
+    def _go_to_movements_page(self, page: int) -> None:
+        page = max(1, min(page, self._movements_total_pages()))
+        if page == self._movements_current_page:
+            return
+        self._movements_current_page = page
+        self._render_movements_page()
+
+    def _on_movements_page_size_changed(self) -> None:
+        self._movements_page_size = PAGE_SIZE_CHOICES[
+            self.movements_page_size_combo.currentIndex()
+        ]
+        self._movements_current_page = 1
+        self._render_movements_page()
+
     def _refresh_movements(self) -> None:
+        self._render_movements_page()
+
+    def _render_movements_page(self) -> None:
         with session_scope() as session:
-            movements = list_movements(session)
+            self._movements_total_count = count_movements(session)
+            total_pages = self._movements_total_pages()
+            self._movements_current_page = max(
+                1, min(self._movements_current_page, total_pages)
+            )
+            offset = (self._movements_current_page - 1) * self._movements_page_size
+            movements = list_movements(
+                session, limit=self._movements_page_size, offset=offset
+            )
             rows = [
                 (
                     m.created_at.strftime("%d/%m/%Y %H:%M"),
@@ -780,12 +889,29 @@ class MainWindow(QMainWindow):
                 for m in movements
             ]
 
+        has_rows = len(rows) > 0
+        self.movements_table.setVisible(has_rows)
+        self.movements_empty_state.setVisible(not has_rows)
+
         self.movements_table.setRowCount(len(rows))
         for row_index, values in enumerate(rows):
             for column_index, value in enumerate(values):
                 self.movements_table.setItem(
                     row_index, column_index, QTableWidgetItem(str(value))
                 )
+
+        self.movements_summary_label.setText(
+            f"{len(rows)} mouvement(s) affiché(s) sur {self._movements_total_count} au total."
+        )
+        self.movements_page_indicator_label.setText(str(self._movements_current_page))
+        self.movements_first_page_button.setEnabled(self._movements_current_page > 1)
+        self.movements_prev_page_button.setEnabled(self._movements_current_page > 1)
+        self.movements_next_page_button.setEnabled(
+            self._movements_current_page < total_pages
+        )
+        self.movements_last_page_button.setEnabled(
+            self._movements_current_page < total_pages
+        )
 
     # ------------------------------------------------------------------
     # Sélection courante

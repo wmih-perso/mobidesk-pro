@@ -22,8 +22,8 @@ class Display(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     reference: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    brand: Mapped[str] = mapped_column(String(100), default="")
-    phone_model: Mapped[str] = mapped_column(String(150), default="")
+    brand: Mapped[str] = mapped_column(String(100), default="", index=True)
+    phone_model: Mapped[str] = mapped_column(String(150), default="", index=True)
     quality: Mapped[str] = mapped_column(String(50), default="")
     color: Mapped[str] = mapped_column(String(50), default="")
 
@@ -60,7 +60,7 @@ class StockMovement(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    display_id: Mapped[int] = mapped_column(ForeignKey("displays.id"))
+    display_id: Mapped[int] = mapped_column(ForeignKey("displays.id"), index=True)
     display: Mapped["Display"] = relationship(back_populates="movements")
 
     change_quantity: Mapped[int]  # positif = entrée, négatif = sortie
@@ -71,11 +71,11 @@ class StockMovement(Base):
     # Renseignés uniquement pour une sortie de motif "Vente" — les prix sont
     # figés au moment de la vente pour que le bénéfice historique ne bouge
     # jamais si le prix d'achat ou de vente de l'afficheur change ensuite.
-    is_sale: Mapped[bool] = mapped_column(default=False)
+    is_sale: Mapped[bool] = mapped_column(default=False, index=True)
     unit_purchase_price_cents: Mapped[int] = mapped_column(default=0)
     unit_sale_price_cents: Mapped[int] = mapped_column(default=0)
 
-    created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property
     def profit_cents(self) -> int:

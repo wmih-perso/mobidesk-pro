@@ -3,6 +3,8 @@ import pytest
 from app.services import (
     StockError,
     adjust_stock,
+    count_low_stock_displays,
+    count_movements,
     create_display,
     deactivate_display,
     list_displays,
@@ -137,3 +139,39 @@ def test_deactivate_display_hides_it_from_default_listing(db_session):
 
     assert list_displays(db_session) == []
     assert list_displays(db_session, only_active=False) != []
+
+
+def test_count_low_stock_displays_matches_property(db_session):
+    _create_sample(db_session, reference="AFF-001", quantity=1, min_stock=5)
+    _create_sample(db_session, reference="AFF-002", quantity=20, min_stock=5)
+    _create_sample(db_session, reference="AFF-003", quantity=3, min_stock=3)
+
+    assert count_low_stock_displays(db_session) == 2
+
+
+def test_count_low_stock_displays_excludes_inactive(db_session):
+    display = _create_sample(db_session, reference="AFF-001", quantity=1, min_stock=5)
+    deactivate_display(db_session, display.id)
+
+    assert count_low_stock_displays(db_session) == 0
+
+
+def test_list_movements_pagination_orders_most_recent_first(db_session):
+    display = _create_sample(db_session, quantity=0)
+    for i in range(5):
+        adjust_stock(db_session, display.id, change_quantity=1, reason=f"Entrée {i}")
+
+    first_page = list_movements(db_session, limit=2, offset=0)
+    second_page = list_movements(db_session, limit=2, offset=2)
+
+    assert [m.reason for m in first_page] == ["Entrée 4", "Entrée 3"]
+    assert [m.reason for m in second_page] == ["Entrée 2", "Entrée 1"]
+
+
+def test_count_movements_returns_total_regardless_of_pagination(db_session):
+    display = _create_sample(db_session, quantity=0)
+    for i in range(3):
+        adjust_stock(db_session, display.id, change_quantity=1, reason=f"Entrée {i}")
+
+    assert count_movements(db_session) == 3
+    assert len(list_movements(db_session, limit=1)) == 1

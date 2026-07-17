@@ -57,6 +57,28 @@ def _migrate_stock_movements_schema(engine) -> None:
         connection.commit()
 
 
+def _ensure_indexes(engine) -> None:
+    """Crée les index de performance manquants sur une base déjà existante.
+
+    Comme pour _migrate_stock_movements_schema, create_all() ne modifie
+    jamais une table déjà créée — les index ajoutés au modèle après coup
+    doivent être créés explicitement ici. CREATE INDEX IF NOT EXISTS est
+    naturellement idempotent (no-op sur une base neuve où create_all()
+    les a déjà créés, et sur une base déjà migrée).
+    """
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_displays_brand ON displays (brand)",
+        "CREATE INDEX IF NOT EXISTS ix_displays_phone_model ON displays (phone_model)",
+        "CREATE INDEX IF NOT EXISTS ix_stock_movements_display_id ON stock_movements (display_id)",
+        "CREATE INDEX IF NOT EXISTS ix_stock_movements_created_at ON stock_movements (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_stock_movements_is_sale ON stock_movements (is_sale)",
+    ]
+    with engine.connect() as connection:
+        for statement in statements:
+            connection.exec_driver_sql(statement)
+        connection.commit()
+
+
 def init_engine(database_path: Path | str | None = None):
     """Crée le moteur, active les clés étrangères et crée les tables manquantes."""
     global _engine, _session_factory
@@ -69,6 +91,7 @@ def init_engine(database_path: Path | str | None = None):
 
     Base.metadata.create_all(_engine)
     _migrate_stock_movements_schema(_engine)
+    _ensure_indexes(_engine)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

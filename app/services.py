@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import Display, StockMovement
 
@@ -38,13 +38,22 @@ def list_displays(
             | Display.phone_model.ilike(pattern)
         )
 
-    stmt = stmt.order_by(Display.brand, Display.phone_model)
-    displays = list(session.scalars(stmt).all())
-
     if only_low_stock:
-        displays = [d for d in displays if d.is_low_stock]
+        stmt = stmt.where(Display.quantity <= Display.min_stock)
 
-    return displays
+    stmt = stmt.order_by(Display.brand, Display.phone_model)
+    return list(session.scalars(stmt).all())
+
+
+def count_low_stock_displays(session: Session) -> int:
+    """Nombre d'afficheurs actifs en alerte de stock bas — sans charger
+    les lignes elles-mêmes (utilisé pour la carte statistique)."""
+    stmt = (
+        select(func.count())
+        .select_from(Display)
+        .where(Display.is_active.is_(True), Display.quantity <= Display.min_stock)
+    )
+    return session.scalar(stmt) or 0
 
 
 def get_display(session: Session, display_id: int) -> Display:
@@ -207,11 +216,32 @@ def deactivate_display(session: Session, display_id: int) -> None:
     session.flush()
 
 
-def list_movements(session: Session, *, display_id: int | None = None) -> list[StockMovement]:
-    stmt = select(StockMovement).order_by(StockMovement.created_at.desc())
+def list_movements(
+    session: Session,
+    *,
+    display_id: int | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> list[StockMovement]:
+    stmt = (
+        select(StockMovement)
+        .options(selectinload(StockMovement.display))
+        .order_by(StockMovement.created_at.desc())
+    )
     if display_id is not None:
         stmt = stmt.where(StockMovement.display_id == display_id)
+    if offset is not None:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list(session.scalars(stmt).all())
+
+
+def count_movements(session: Session, *, display_id: int | None = None) -> int:
+    stmt = select(func.count()).select_from(StockMovement)
+    if display_id is not None:
+        stmt = stmt.where(StockMovement.display_id == display_id)
+    return session.scalar(stmt) or 0
 
 
 def list_sales(
@@ -222,7 +252,11 @@ def list_sales(
 ) -> list[StockMovement]:
     """Mouvements de vente (is_sale=True) dans la période donnée, du plus
     récent au plus ancien. `start`/`end` sont inclusifs si fournis."""
-    stmt = select(StockMovement).where(StockMovement.is_sale.is_(True))
+    stmt = (
+        select(StockMovement)
+        .options(selectinload(StockMovement.display))
+        .where(StockMovement.is_sale.is_(True))
+    )
     if start is not None:
         stmt = stmt.where(StockMovement.created_at >= start)
     if end is not None:
