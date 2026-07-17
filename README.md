@@ -131,9 +131,25 @@ automatiquement la nouvelle version.
 - Le premier lancement de l'exécutable peut prendre quelques secondes de
   plus que les suivants (décompression interne).
 - Certains antivirus signalent parfois, à tort, les exécutables générés par
-  PyInstaller comme suspects (faux positif fréquent avec cet outil). Si
-  Windows Defender ou un antivirus bloque le fichier, ajoute une exception
-  pour `MobiDeskPro.exe`.
+  PyInstaller comme suspects (faux positif fréquent avec cet outil, lié à la
+  façon dont Python est empaqueté — pas à un vrai problème de sécurité).
+
+  **Si SmartScreen bloque au double-clic** ("Windows a protégé votre
+  ordinateur") :
+  1. Cliquer sur *Informations complémentaires* (en bas à gauche de la
+     fenêtre bleue).
+  2. Cliquer sur *Exécuter quand même*.
+
+  **Si Windows Defender met le fichier en quarantaine** :
+  1. Ouvrir *Sécurité Windows* → *Protection contre les virus et menaces*
+     → *Historique de protection*.
+  2. Trouver `MobiDeskPro.exe` → *Autoriser sur l'appareil*.
+
+  **Pour éviter que ça se reproduise à chaque nouvelle version**, ajouter
+  une exclusion permanente : *Sécurité Windows* → *Protection contre les
+  virus et menaces* → *Gérer les paramètres* → *Exclusions* → *Ajouter ou
+  supprimer des exclusions* → *Ajouter une exclusion* → *Fichier*, et
+  sélectionner l'emplacement où `MobiDeskPro.exe` sera installé.
 - Pour un installateur Windows plus classique (raccourci Bureau/menu
   Démarrer, désinstallation via le Panneau de configuration), l'étape
   suivante consiste à empaqueter `MobiDeskPro.exe` avec
