@@ -36,7 +36,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -46,4 +46,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="app/ui/resources/app_icon.ico",
+    version="version_info.txt",
 )
