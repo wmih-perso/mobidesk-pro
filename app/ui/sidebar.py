@@ -35,12 +35,20 @@ NAV_SECTIONS: list[tuple[str, list[tuple[str, str, str, bool]]]] = [
     (
         "Gestion du stock",
         [
-            ("displays", "monitor", "Afficheurs", False),
+            ("displays", "monitor", "Produits", False),
             ("movements", "list", "Mouvements de stock", False),
-            ("profit", "coin", "Bénéfices", False),
-            ("stock_in", "download", "Entrée de stock", True),
-            ("stock_out", "upload", "Sortie de stock", True),
             ("alerts", "bell", "Alertes de stock", False),
+            ("profit", "coin", "Bénéfices", False),
+            ("repairs", "wrench", "Réparations", False),
+            ("contacts", "users", "Contacts", False),
+        ],
+    ),
+    (
+        "Actions rapides",
+        [
+            ("purchase", "download", "Achat fournisseur", True),
+            ("sale_wholesale", "upload", "Vente en gros", True),
+            ("stock_adjust", "list", "Ajustement de stock", True),
         ],
     ),
     ("", [("settings", "gear", "Paramètres", False)]),

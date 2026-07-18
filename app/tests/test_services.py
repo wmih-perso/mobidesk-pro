@@ -3,9 +3,12 @@ import pytest
 from app.services import (
     StockError,
     adjust_stock,
+    apply_stock_batch,
     count_low_stock_displays,
     count_movements,
     create_display,
+    create_reseller,
+    create_supplier,
     deactivate_display,
     list_displays,
     list_movements,
@@ -16,12 +19,13 @@ from app.services import (
 def _create_sample(db_session, **overrides):
     fields = dict(
         reference="AFF-001",
+        category="Afficheur",
         brand="Samsung",
         phone_model="Galaxy A12",
         quality="Incell",
-        color="Noir",
         purchase_price_cents=150000,
-        sale_price_cents=250000,
+        sale_price_retail_cents=250000,
+        sale_price_wholesale_cents=220000,
         quantity=10,
         min_stock=3,
     )
@@ -118,18 +122,126 @@ def test_update_display_changes_fields_without_touching_quantity(db_session):
         db_session,
         display.id,
         reference="AFF-001-B",
+        category="Afficheur",
         brand="Samsung",
         phone_model="Galaxy A13",
         quality="Original",
-        color="Bleu",
         purchase_price_cents=160000,
-        sale_price_cents=260000,
+        sale_price_retail_cents=260000,
+        sale_price_wholesale_cents=230000,
         min_stock=2,
     )
 
     assert display.reference == "AFF-001-B"
     assert display.phone_model == "Galaxy A13"
     assert display.quantity == 7  # inchangée
+
+
+def test_adjust_stock_persists_supplier_id_on_purchase(db_session):
+    supplier = create_supplier(db_session, name="ACME Pièces")
+    display = _create_sample(db_session, quantity=5)
+
+    adjust_stock(
+        db_session,
+        display.id,
+        change_quantity=3,
+        reason="Achat fournisseur",
+        supplier_id=supplier.id,
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.supplier_id == supplier.id
+    assert movement.supplier.name == "ACME Pièces"
+    assert movement.reseller_id is None
+
+
+def test_adjust_stock_persists_reseller_id_on_wholesale_sale(db_session):
+    reseller = create_reseller(db_session, name="Revendeur Test")
+    display = _create_sample(db_session, quantity=5)
+
+    adjust_stock(
+        db_session,
+        display.id,
+        change_quantity=-2,
+        reason="Vente",
+        is_sale=True,
+        sale_price_type="wholesale",
+        reseller_id=reseller.id,
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.reseller_id == reseller.id
+    assert movement.reseller.name == "Revendeur Test"
+    assert movement.supplier_id is None
+
+
+def test_apply_stock_batch_requires_at_least_one_line(db_session):
+    with pytest.raises(StockError):
+        apply_stock_batch(db_session, direction=1, reason="Achat fournisseur", lines=[])
+
+
+def test_apply_stock_batch_applies_all_lines_atomically(db_session):
+    supplier = create_supplier(db_session, name="ACME Pièces")
+    display_a = _create_sample(db_session, reference="AFF-001", quantity=5)
+    display_b = _create_sample(db_session, reference="AFF-002", quantity=2)
+
+    apply_stock_batch(
+        db_session,
+        direction=1,
+        reason="Achat fournisseur",
+        lines=[(display_a.id, 3, None), (display_b.id, 10, None)],
+        supplier_id=supplier.id,
+    )
+
+    db_session.refresh(display_a)
+    db_session.refresh(display_b)
+    assert display_a.quantity == 8
+    assert display_b.quantity == 12
+
+    movements_a = list_movements(db_session, display_id=display_a.id)
+    movements_b = list_movements(db_session, display_id=display_b.id)
+    assert movements_a[0].supplier_id == supplier.id
+    assert movements_b[0].supplier_id == supplier.id
+
+
+def test_apply_stock_batch_rolls_back_whole_batch_on_failure(db_session):
+    display_a = _create_sample(db_session, reference="AFF-001", quantity=5)
+    display_b = _create_sample(db_session, reference="AFF-002", quantity=2)
+    db_session.commit()
+
+    with pytest.raises(StockError):
+        apply_stock_batch(
+            db_session,
+            direction=-1,
+            reason="Vente",
+            lines=[(display_a.id, 3, None), (display_b.id, 999, None)],
+            is_sale=True,
+            sale_price_type="retail",
+        )
+
+    db_session.rollback()
+    db_session.refresh(display_a)
+    db_session.refresh(display_b)
+    assert display_a.quantity == 5  # rien n'a bougé, y compris la ligne valide avant l'échec
+    assert display_b.quantity == 2
+
+
+def test_apply_stock_batch_uses_price_override_only_for_sales(db_session):
+    display = _create_sample(
+        db_session, sale_price_retail_cents=250000, sale_price_wholesale_cents=220000, quantity=5
+    )
+
+    apply_stock_batch(
+        db_session,
+        direction=-1,
+        reason="Vente",
+        lines=[(display.id, 1, 200000)],
+        is_sale=True,
+        sale_price_type="retail",
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.unit_sale_price_cents == 200000
 
 
 def test_deactivate_display_hides_it_from_default_listing(db_session):
@@ -175,3 +287,77 @@ def test_count_movements_returns_total_regardless_of_pagination(db_session):
 
     assert count_movements(db_session) == 3
     assert len(list_movements(db_session, limit=1)) == 1
+
+
+def test_adjust_stock_sale_requires_price_type(db_session):
+    display = _create_sample(db_session, quantity=5)
+
+    with pytest.raises(StockError):
+        adjust_stock(db_session, display.id, change_quantity=-1, reason="Vente", is_sale=True)
+
+
+def test_adjust_stock_sale_uses_retail_price(db_session):
+    display = _create_sample(
+        db_session, sale_price_retail_cents=250000, sale_price_wholesale_cents=220000, quantity=5
+    )
+
+    adjust_stock(
+        db_session,
+        display.id,
+        change_quantity=-1,
+        reason="Vente",
+        is_sale=True,
+        sale_price_type="retail",
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.unit_sale_price_cents == 250000
+    assert movement.sale_price_type == "retail"
+
+
+def test_adjust_stock_sale_uses_wholesale_price(db_session):
+    display = _create_sample(
+        db_session, sale_price_retail_cents=250000, sale_price_wholesale_cents=220000, quantity=5
+    )
+
+    adjust_stock(
+        db_session,
+        display.id,
+        change_quantity=-1,
+        reason="Vente",
+        is_sale=True,
+        sale_price_type="wholesale",
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.unit_sale_price_cents == 220000
+    assert movement.sale_price_type == "wholesale"
+
+
+def test_adjust_stock_sale_allows_custom_price_override(db_session):
+    display = _create_sample(
+        db_session, sale_price_retail_cents=250000, sale_price_wholesale_cents=220000, quantity=5
+    )
+
+    adjust_stock(
+        db_session,
+        display.id,
+        change_quantity=-1,
+        reason="Vente",
+        is_sale=True,
+        sale_price_type="retail",
+        unit_sale_price_cents=200000,
+    )
+
+    [movement] = list_movements(db_session, display_id=display.id, limit=1)
+    assert movement.unit_sale_price_cents == 200000
+    assert movement.sale_price_type == "retail"
+
+
+def test_list_displays_filters_by_category(db_session):
+    _create_sample(db_session, reference="AFF-001", category="Afficheur")
+    _create_sample(db_session, reference="BAT-001", category="Batterie")
+
+    results = list_displays(db_session, category="Batterie")
+
+    assert [d.reference for d in results] == ["BAT-001"]

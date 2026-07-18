@@ -31,13 +31,16 @@ from app.ui.widgets import EmptyState, apply_card_shadow
 
 SALE_COLUMNS = [
     "Date",
-    "Afficheur",
+    "Produit",
+    "Type",
     "Quantité",
     "Prix d'achat unitaire",
     "Prix de vente unitaire",
     "Bénéfice unitaire",
     "Bénéfice total",
 ]
+
+SALE_PRICE_TYPE_LABELS = {"retail": "Détail", "wholesale": "Gros"}
 
 
 class ProfitTab(QWidget):
@@ -172,6 +175,7 @@ class ProfitTab(QWidget):
                 (
                     m.created_at.strftime("%d/%m/%Y %H:%M"),
                     m.display.reference,
+                    SALE_PRICE_TYPE_LABELS.get(m.sale_price_type, ""),
                     abs(m.change_quantity),
                     format_da(m.unit_purchase_price_cents),
                     format_da(m.unit_sale_price_cents),

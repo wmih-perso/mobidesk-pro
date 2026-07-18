@@ -157,6 +157,45 @@ def _draw_tag(painter: QPainter, size: int, color: str) -> None:
     painter.setBrush(Qt.BrushStyle.NoBrush)
 
 
+def _draw_wrench(painter: QPainter, size: int, color: str) -> None:
+    path = QPainterPath()
+    path.moveTo(_p(size, 0.30, 0.70))
+    path.lineTo(_p(size, 0.62, 0.38))
+    painter.drawPath(path)
+    painter.drawLine(_p(size, 0.18, 0.82), _p(size, 0.30, 0.70))
+
+    head_center = _p(size, 0.72, 0.28)
+    head_radius = size * 0.16
+    painter.drawArc(
+        QRectF(
+            head_center.x() - head_radius,
+            head_center.y() - head_radius,
+            head_radius * 2,
+            head_radius * 2,
+        ),
+        30 * 16,
+        300 * 16,
+    )
+
+
+def _draw_users(painter: QPainter, size: int, color: str) -> None:
+    left_center = _p(size, 0.36, 0.38)
+    left_radius = size * 0.14
+    painter.drawEllipse(left_center, left_radius, left_radius)
+    left_body = QPainterPath()
+    left_body.moveTo(_p(size, 0.14, 0.82))
+    left_body.arcTo(QRectF(_p(size, 0.14, 0.52), _p(size, 0.58, 0.82)), 180, 180)
+    painter.drawPath(left_body)
+
+    right_center = _p(size, 0.66, 0.32)
+    right_radius = size * 0.11
+    painter.drawEllipse(right_center, right_radius, right_radius)
+    right_body = QPainterPath()
+    right_body.moveTo(_p(size, 0.58, 0.66))
+    right_body.arcTo(QRectF(_p(size, 0.55, 0.44), _p(size, 0.87, 0.66)), 180, 145)
+    painter.drawPath(right_body)
+
+
 _DRAWERS = {
     "home": _draw_home,
     "monitor": _draw_monitor,
@@ -167,4 +206,6 @@ _DRAWERS = {
     "gear": _draw_gear,
     "tag": _draw_tag,
     "coin": _draw_coin,
+    "wrench": _draw_wrench,
+    "users": _draw_users,
 }

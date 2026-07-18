@@ -1,4 +1,4 @@
-"""Fenêtre principale — gestion du stock des afficheurs."""
+"""Fenêtre principale — gestion du stock de produits."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -46,10 +46,16 @@ from app.services import (
     sum_profit_cents,
 )
 from app.ui.change_password_dialog import ChangePasswordDialog
+from app.ui.contacts_tab import ContactsTab
 from app.ui.display_dialog import DisplayDialog
 from app.ui.profit_tab import ProfitTab
+from app.ui.repairs_tab import RepairsTab
 from app.ui.sidebar import Sidebar
-from app.ui.stock_adjust_dialog import StockInDialog, StockOutDialog
+from app.ui.stock_adjust_dialog import (
+    StockAdjustmentDialog,
+    SupplierPurchaseDialog,
+    WholesaleSaleDialog,
+)
 from app.ui.updater_dialog import UpdaterDialog
 from app.ui.widgets import EmptyState, IconStatCard, apply_card_shadow
 from app.updater import (
@@ -80,18 +86,20 @@ class _UpdateCheckThread(QThread):
 
 DISPLAY_COLUMNS = [
     "Référence",
+    "Catégorie",
     "Marque",
     "Modèle",
     "Qualité",
-    "Couleur",
     "Prix d'achat",
-    "Prix de vente",
+    "Prix de vente (détail)",
+    "Prix de vente (gros)",
     "Quantité",
     "Stock min.",
     "Alerte",
+    "",
 ]
 
-MOVEMENT_COLUMNS = ["Date", "Afficheur", "Mouvement", "Avant", "Après", "Motif"]
+MOVEMENT_COLUMNS = ["Date", "Pièce", "Mouvement", "Avant", "Après", "Motif"]
 
 MONTH_NAMES_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -106,7 +114,7 @@ APP_ICON_PATH = Path(__file__).resolve().parent / "resources" / "app_icon.png"
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("MobiDesk Pro — Stock des afficheurs")
+        self.setWindowTitle("MobiDesk Pro — Stock des produits")
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(1280, 780)
@@ -115,6 +123,7 @@ class MainWindow(QMainWindow):
         self._current_page = 1
         self._page_size = PAGE_SIZE_CHOICES[0]
         self._filtered_displays: list = []
+        self._only_low_stock = False
 
         self._movements_current_page = 1
         self._movements_page_size = PAGE_SIZE_CHOICES[0]
@@ -190,6 +199,10 @@ class MainWindow(QMainWindow):
         self.search_input.textChanged.connect(lambda: self._search_debounce.start())
         layout.addWidget(self.search_input)
 
+        add_product_button = QPushButton("+  Ajouter un produit")
+        add_product_button.clicked.connect(self._on_add)
+        layout.addWidget(add_product_button)
+
         layout.addStretch()
 
         self.datetime_pill = self._build_datetime_pill()
@@ -230,7 +243,7 @@ class MainWindow(QMainWindow):
         self.date_label.setText(f"{now.day} {MONTH_NAMES_FR[now.month - 1]} {now.year}")
         self.time_label.setText(now.strftime("%H:%M"))
 
-    # ---------------- Page « Stock » (tableau de bord + afficheurs) -------
+    # ---------------- Page « Stock » (tableau de bord + produits) ---------
 
     def _build_stock_page(self) -> QWidget:
         page = QWidget()
@@ -239,15 +252,18 @@ class MainWindow(QMainWindow):
         layout.setSpacing(18)
 
         layout.addLayout(self._build_stat_cards())
-        layout.addWidget(self._build_toolbar_card())
 
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, stretch=1)
 
-        self.tabs.addTab(self._build_displays_tab(), "🖥️  Afficheurs")
+        self.tabs.addTab(self._build_displays_tab(), "🖥️  Produits")
         self.tabs.addTab(self._build_movements_tab(), "📋  Mouvements de stock")
         self.profit_tab = ProfitTab()
         self.tabs.addTab(self.profit_tab, "💰  Bénéfices")
+        self.repairs_tab = RepairsTab()
+        self.tabs.addTab(self.repairs_tab, "🔧  Réparations")
+        self.contacts_tab = ContactsTab()
+        self.tabs.addTab(self.contacts_tab, "👥  Contacts")
 
         return page
 
@@ -256,8 +272,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
 
         self.total_card = IconStatCard(
-            "🖥️", "Afficheurs en stock", "0", "Total disponible",
-            accent="#4338ca", accent_bg="#eeecfd", sparkline_seed=1,
+            "🖥️", "Produits en stock", "0", "Total disponible",
+            accent="#0f5c46", accent_bg="#e0efe8", sparkline_seed=1,
         )
         self.low_stock_card = IconStatCard(
             "🔔", "En alerte de stock bas", "0", "Nécessite votre attention",
@@ -278,51 +294,6 @@ class MainWindow(QMainWindow):
             layout.addWidget(card, stretch=1)
 
         return layout
-
-    def _build_toolbar_card(self) -> QFrame:
-        card = QFrame()
-        card.setObjectName("Card")
-        apply_card_shadow(card)
-
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(12)
-
-        self.low_stock_checkbox = QCheckBox("Stock faible uniquement")
-        self.low_stock_checkbox.stateChanged.connect(self._on_filters_changed)
-        layout.addWidget(self.low_stock_checkbox)
-        layout.addStretch()
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setStyleSheet("color: #eaecf3;")
-        layout.addWidget(separator)
-
-        add_button = QPushButton("+  Ajouter")
-        add_button.clicked.connect(self._on_add)
-        layout.addWidget(add_button)
-
-        self.edit_button = QPushButton("✎  Modifier")
-        self.edit_button.setObjectName("SecondaryButton")
-        self.edit_button.clicked.connect(self._on_edit)
-        layout.addWidget(self.edit_button)
-
-        self.stock_in_button = QPushButton("📥  Entrée de stock")
-        self.stock_in_button.setObjectName("SecondaryButton")
-        self.stock_in_button.clicked.connect(self._on_stock_in)
-        layout.addWidget(self.stock_in_button)
-
-        self.stock_out_button = QPushButton("📤  Sortie de stock")
-        self.stock_out_button.setObjectName("SecondaryButton")
-        self.stock_out_button.clicked.connect(self._on_stock_out)
-        layout.addWidget(self.stock_out_button)
-
-        self.delete_button = QPushButton("🗑  Supprimer")
-        self.delete_button.setObjectName("DangerButton")
-        self.delete_button.clicked.connect(self._on_delete)
-        layout.addWidget(self.delete_button)
-
-        return card
 
     def _build_displays_tab(self) -> QWidget:
         container = QFrame()
@@ -360,15 +331,29 @@ class MainWindow(QMainWindow):
         self.displays_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
-        self.displays_table.horizontalHeader().setStretchLastSection(True)
+        # Les colonnes Alerte et Action contiennent des cellWidgets posés
+        # après le rendu initial de la ligne — ResizeToContents ignorerait
+        # tout setColumnWidth ultérieur, laissant le badge "Stock faible"
+        # tronqué. Une largeur fixe leur garantit assez de place.
+        alert_column_index = len(DISPLAY_COLUMNS) - 2
+        action_column_index = len(DISPLAY_COLUMNS) - 1
+        self.displays_table.horizontalHeader().setSectionResizeMode(
+            alert_column_index, QHeaderView.ResizeMode.Fixed
+        )
+        self.displays_table.horizontalHeader().setSectionResizeMode(
+            action_column_index, QHeaderView.ResizeMode.Fixed
+        )
+        self.displays_table.setColumnWidth(alert_column_index, 120)
+        self.displays_table.setColumnWidth(action_column_index, 70)
+        self.displays_table.horizontalHeader().setStretchLastSection(False)
         self.displays_table.doubleClicked.connect(self._on_edit)
         layout.addWidget(self.displays_table, stretch=1)
 
         self.displays_empty_state = EmptyState(
             "📦",
-            "Aucun afficheur trouvé",
-            "Commencez par ajouter de nouveaux afficheurs à votre stock.",
-            "+  Ajouter un afficheur",
+            "Aucun produit trouvé",
+            "Commencez par ajouter de nouveaux produits à votre stock.",
+            "+  Ajouter un produit",
         )
         self.displays_empty_state.action_button.clicked.connect(self._on_add)
         layout.addWidget(self.displays_empty_state, stretch=1)
@@ -539,7 +524,7 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(title)
 
         info_label = QLabel(
-            f"MobiDesk Pro — Gestion du stock des afficheurs\nVersion {APP_VERSION}"
+            f"MobiDesk Pro — Gestion du stock de produits\nVersion {APP_VERSION}"
         )
         info_label.setStyleSheet("color: #8991ac; font-weight: 500;")
         card_layout.addWidget(info_label)
@@ -736,10 +721,11 @@ class MainWindow(QMainWindow):
     def _on_nav_selected(self, page_key: str) -> None:
         if page_key == "dashboard":
             self.search_input.clear()
-            self.low_stock_checkbox.setChecked(False)
+            self._set_only_low_stock(False)
             self.stack.setCurrentIndex(0)
             self.tabs.setCurrentIndex(0)
         elif page_key == "displays":
+            self._set_only_low_stock(False)
             self.stack.setCurrentIndex(0)
             self.tabs.setCurrentIndex(0)
         elif page_key == "movements":
@@ -748,24 +734,43 @@ class MainWindow(QMainWindow):
         elif page_key == "profit":
             self.stack.setCurrentIndex(0)
             self.tabs.setCurrentIndex(2)
+        elif page_key == "repairs":
+            self.stack.setCurrentIndex(0)
+            self.tabs.setCurrentIndex(3)
+        elif page_key == "contacts":
+            self.stack.setCurrentIndex(0)
+            self.tabs.setCurrentIndex(4)
         elif page_key == "alerts":
             self.stack.setCurrentIndex(0)
             self.tabs.setCurrentIndex(0)
-            self.low_stock_checkbox.setChecked(True)
-        elif page_key == "stock_in":
-            self._on_stock_in()
+            self._set_only_low_stock(True)
+        elif page_key == "purchase":
+            self._on_purchase()
             self.sidebar.select_page(self._active_nav_key())
-        elif page_key == "stock_out":
-            self._on_stock_out()
+        elif page_key == "sale_wholesale":
+            self._on_sale_wholesale()
+            self.sidebar.select_page(self._active_nav_key())
+        elif page_key == "stock_adjust":
+            self._on_stock_adjust()
             self.sidebar.select_page(self._active_nav_key())
         elif page_key == "settings":
             self.stack.setCurrentIndex(1)
 
+    def _set_only_low_stock(self, value: bool) -> None:
+        if value == self._only_low_stock:
+            return
+        self._only_low_stock = value
+        self._on_filters_changed()
+
     def _active_nav_key(self) -> str:
         if self.stack.currentIndex() == 1:
             return "settings"
-        if self.low_stock_checkbox.isChecked():
+        if self._only_low_stock:
             return "alerts"
+        if self.tabs.currentIndex() == 4:
+            return "contacts"
+        if self.tabs.currentIndex() == 3:
+            return "repairs"
         if self.tabs.currentIndex() == 2:
             return "profit"
         return "movements" if self.tabs.currentIndex() == 1 else "displays"
@@ -783,6 +788,8 @@ class MainWindow(QMainWindow):
         self._refresh_movements()
         self._refresh_profit_card()
         self.profit_tab.refresh()
+        self.repairs_tab.refresh()
+        self.contacts_tab.refresh()
 
     def _refresh_profit_card(self) -> None:
         start, _ = bounds_for_period("Ce mois-ci")
@@ -796,7 +803,7 @@ class MainWindow(QMainWindow):
             self._filtered_displays = list_displays(
                 session,
                 search=self.search_input.text(),
-                only_low_stock=self.low_stock_checkbox.isChecked(),
+                only_low_stock=self._only_low_stock,
             )
             total_count = len(all_active)
             low_stock_count = count_low_stock_displays(session)
@@ -843,12 +850,13 @@ class MainWindow(QMainWindow):
         for row_index, d in enumerate(page_items):
             values = [
                 d.reference,
+                d.category,
                 d.brand,
                 d.phone_model,
                 d.quality,
-                d.color,
                 format_da(d.purchase_price_cents),
-                format_da(d.sale_price_cents),
+                format_da(d.sale_price_retail_cents),
+                format_da(d.sale_price_wholesale_cents),
                 d.quantity,
                 d.min_stock,
             ]
@@ -858,13 +866,14 @@ class MainWindow(QMainWindow):
                 self.displays_table.setItem(row_index, column_index, item)
 
             self._set_alert_badge(row_index, d.id, d.is_low_stock)
+            self._set_row_actions(row_index, d.id)
 
         if total_active_count is None:
             with session_scope() as session:
                 total_active_count = len(list_displays(session, only_active=True))
 
         self.summary_label.setText(
-            f"{len(filtered)} afficheur(s) affiché(s) sur {total_active_count} au total."
+            f"{len(filtered)} produit(s) affiché(s) sur {total_active_count} au total."
         )
         self.page_indicator_label.setText(str(self._current_page))
         self.first_page_button.setEnabled(self._current_page > 1)
@@ -873,7 +882,7 @@ class MainWindow(QMainWindow):
         self.last_page_button.setEnabled(self._current_page < total_pages)
 
     def _set_alert_badge(self, row_index: int, display_id: int, is_low_stock: bool) -> None:
-        column_index = len(DISPLAY_COLUMNS) - 1
+        column_index = len(DISPLAY_COLUMNS) - 2
         if not is_low_stock:
             item = QTableWidgetItem("")
             item.setData(Qt.ItemDataRole.UserRole, display_id)
@@ -881,14 +890,51 @@ class MainWindow(QMainWindow):
             self.displays_table.removeCellWidget(row_index, column_index)
             return
 
-        badge = QLabel("Stock bas")
+        badge = QLabel("Stock faible")
         badge.setObjectName("LowStockBadge")
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setWordWrap(False)
+        badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
 
         wrapper = QWidget()
         wrapper_layout = QHBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(8, 4, 8, 4)
-        wrapper_layout.addWidget(badge)
+        wrapper_layout.setContentsMargins(8, 0, 8, 0)
+        wrapper_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        wrapper_layout.addStretch()
+
+        placeholder = QTableWidgetItem("")
+        placeholder.setData(Qt.ItemDataRole.UserRole, display_id)
+        self.displays_table.setItem(row_index, column_index, placeholder)
+        self.displays_table.setCellWidget(row_index, column_index, wrapper)
+
+    def _set_row_actions(self, row_index: int, display_id: int) -> None:
+        column_index = len(DISPLAY_COLUMNS) - 1
+
+        wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(2, 2, 2, 2)
+        wrapper_layout.setSpacing(4)
+
+        add_stock_button = QPushButton("+")
+        add_stock_button.setObjectName("IconButton")
+        add_stock_button.setFixedSize(24, 24)
+        add_stock_button.setStyleSheet("padding: 0; font-size: 14px;")
+        add_stock_button.setToolTip("Achat fournisseur")
+        add_stock_button.clicked.connect(
+            lambda _checked, d_id=display_id: self._on_row_purchase(d_id)
+        )
+        wrapper_layout.addWidget(add_stock_button)
+
+        delete_button = QPushButton("×")
+        delete_button.setObjectName("IconButton")
+        delete_button.setFixedSize(24, 24)
+        delete_button.setStyleSheet("padding: 0; font-size: 15px; color: #dc2626; font-weight: 700;")
+        delete_button.setToolTip("Supprimer")
+        delete_button.clicked.connect(
+            lambda _checked, d_id=display_id: self._on_row_delete(d_id)
+        )
+        wrapper_layout.addWidget(delete_button)
+
         wrapper_layout.addStretch()
 
         placeholder = QTableWidgetItem("")
@@ -929,6 +975,13 @@ class MainWindow(QMainWindow):
             movements = list_movements(
                 session, limit=self._movements_page_size, offset=offset
             )
+            def _reason_with_contact(m):
+                if m.supplier is not None:
+                    return f"{m.reason} — {m.supplier.name}"
+                if m.reseller is not None:
+                    return f"{m.reason} — {m.reseller.name}"
+                return m.reason
+
             rows = [
                 (
                     m.created_at.strftime("%d/%m/%Y %H:%M"),
@@ -936,7 +989,7 @@ class MainWindow(QMainWindow):
                     "Entrée" if m.change_quantity > 0 else "Sortie",
                     m.quantity_before,
                     m.quantity_after,
-                    m.reason,
+                    _reason_with_contact(m),
                 )
                 for m in movements
             ]
@@ -989,32 +1042,37 @@ class MainWindow(QMainWindow):
     def _on_edit(self) -> None:
         display_id = self._selected_display_id()
         if display_id is None:
-            QMessageBox.information(self, "Modifier", "Veuillez sélectionner un afficheur.")
+            QMessageBox.information(self, "Modifier", "Veuillez sélectionner un produit.")
             return
         dialog = DisplayDialog(display_id)
         if dialog.exec() == DisplayDialog.DialogCode.Accepted:
             self.refresh()
 
-    def _on_stock_in(self) -> None:
-        dialog = StockInDialog(self._selected_display_id())
-        if dialog.exec() == StockInDialog.DialogCode.Accepted:
+    def _on_purchase(self) -> None:
+        dialog = SupplierPurchaseDialog(self._selected_display_id())
+        if dialog.exec() == SupplierPurchaseDialog.DialogCode.Accepted:
             self.refresh()
 
-    def _on_stock_out(self) -> None:
-        dialog = StockOutDialog(self._selected_display_id())
-        if dialog.exec() == StockOutDialog.DialogCode.Accepted:
+    def _on_sale_wholesale(self) -> None:
+        dialog = WholesaleSaleDialog(self._selected_display_id())
+        if dialog.exec() == WholesaleSaleDialog.DialogCode.Accepted:
             self.refresh()
 
-    def _on_delete(self) -> None:
-        display_id = self._selected_display_id()
-        if display_id is None:
-            QMessageBox.information(self, "Supprimer", "Veuillez sélectionner un afficheur.")
-            return
+    def _on_stock_adjust(self) -> None:
+        dialog = StockAdjustmentDialog(self._selected_display_id())
+        if dialog.exec() == StockAdjustmentDialog.DialogCode.Accepted:
+            self.refresh()
 
+    def _on_row_purchase(self, display_id: int) -> None:
+        dialog = SupplierPurchaseDialog(display_id)
+        if dialog.exec() == SupplierPurchaseDialog.DialogCode.Accepted:
+            self.refresh()
+
+    def _on_row_delete(self, display_id: int) -> None:
         confirm = QMessageBox.question(
             self,
             "Confirmer la suppression",
-            "Voulez-vous vraiment supprimer cet afficheur ? "
+            "Voulez-vous vraiment supprimer ce produit ? "
             "Il n'apparaîtra plus dans la liste mais son historique est conservé.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1031,11 +1089,11 @@ class MainWindow(QMainWindow):
 
     def _on_export_csv(self) -> None:
         if not self._filtered_displays:
-            QMessageBox.information(self, "Exporter", "Aucun afficheur à exporter.")
+            QMessageBox.information(self, "Exporter", "Aucun produit à exporter.")
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter les afficheurs", "afficheurs.csv", "Fichiers CSV (*.csv)"
+            self, "Exporter les produits", "produits.csv", "Fichiers CSV (*.csv)"
         )
         if not file_path:
             return
@@ -1043,17 +1101,18 @@ class MainWindow(QMainWindow):
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as csv_file:
                 writer = csv.writer(csv_file, delimiter=";")
-                writer.writerow(DISPLAY_COLUMNS[:-1])
+                writer.writerow(DISPLAY_COLUMNS[:-2])
                 for d in self._filtered_displays:
                     writer.writerow(
                         [
                             d.reference,
+                            d.category,
                             d.brand,
                             d.phone_model,
                             d.quality,
-                            d.color,
                             f"{round(cents_to_da(d.purchase_price_cents))}",
-                            f"{round(cents_to_da(d.sale_price_cents))}",
+                            f"{round(cents_to_da(d.sale_price_retail_cents))}",
+                            f"{round(cents_to_da(d.sale_price_wholesale_cents))}",
                             d.quantity,
                             d.min_stock,
                         ]
@@ -1062,7 +1121,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Erreur d'export", f"Impossible d'écrire le fichier : {error}")
             return
 
-        QMessageBox.information(self, "Export réussi", f"{len(self._filtered_displays)} afficheur(s) exporté(s).")
+        QMessageBox.information(self, "Export réussi", f"{len(self._filtered_displays)} produit(s) exporté(s).")
 
     def _on_columns_clicked(self) -> None:
         QMessageBox.information(

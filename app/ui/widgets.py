@@ -23,23 +23,23 @@ from app.ui.icons import nav_icon
 
 _STEPPER_BUTTON_STYLE = """
     QPushButton {
-        background-color: #f5f6fb;
+        background-color: #f4f7f5;
         border: none;
-        color: #454b64;
+        color: #3d4a43;
         font-size: 15px;
         font-weight: 700;
         padding: 0;
     }
     QPushButton:hover {
-        background-color: #eeecfd;
-        color: #4338ca;
+        background-color: #e0efe8;
+        color: #0f5c46;
     }
     QPushButton:pressed {
-        background-color: #dedafc;
+        background-color: #c5e3d3;
     }
     QPushButton:disabled {
-        color: #c9cde3;
-        background-color: #f5f6fb;
+        color: #a9ddc9;
+        background-color: #f4f7f5;
     }
 """
 
