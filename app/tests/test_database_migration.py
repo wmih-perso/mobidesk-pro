@@ -1,11 +1,14 @@
 from sqlalchemy import create_engine
 
 from app.database import (
+    Base,
     _ensure_indexes,
     _migrate_displays_schema,
     _migrate_repairs_schema,
     _migrate_stock_movements_schema,
+    _seed_default_categories,
 )
+from app import models  # noqa: F401 — enregistre les modèles
 
 
 def _create_legacy_displays_table(engine) -> None:
@@ -66,6 +69,9 @@ def _create_repairs_table(engine) -> None:
         )
         connection.exec_driver_sql(
             "CREATE TABLE resellers (id INTEGER PRIMARY KEY, name VARCHAR(150))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE categories (id INTEGER PRIMARY KEY, name VARCHAR(50))"
         )
         connection.commit()
 
@@ -403,5 +409,52 @@ def test_migrate_repairs_schema_noop_when_tables_absent(tmp_path):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
     _migrate_repairs_schema(engine)  # ne doit pas lever d'erreur si les tables n'existent pas encore
+
+
+def test_seed_default_categories_populates_empty_table(tmp_path):
+    db_path = tmp_path / "fresh.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+
+    _seed_default_categories(engine)
+
+    with engine.connect() as connection:
+        names = {
+            row[0] for row in connection.exec_driver_sql("SELECT name FROM categories").fetchall()
+        }
+    assert names == {"Afficheur", "Batterie", "Autre"}
+
+
+def test_seed_default_categories_does_not_duplicate_on_rerun(tmp_path):
+    db_path = tmp_path / "fresh_twice.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+
+    _seed_default_categories(engine)
+    _seed_default_categories(engine)
+
+    with engine.connect() as connection:
+        (count,) = connection.exec_driver_sql("SELECT COUNT(*) FROM categories").fetchone()
+    assert count == 3
+
+
+def test_seed_default_categories_preserves_user_customizations(tmp_path):
+    db_path = tmp_path / "customized.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+
+    with engine.connect() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO categories (name, created_at) VALUES ('Coque', CURRENT_TIMESTAMP)"
+        )
+        connection.commit()
+
+    _seed_default_categories(engine)  # ne doit pas ajouter les catégories par défaut ici
+
+    with engine.connect() as connection:
+        names = {
+            row[0] for row in connection.exec_driver_sql("SELECT name FROM categories").fetchall()
+        }
+    assert names == {"Coque"}
 
 

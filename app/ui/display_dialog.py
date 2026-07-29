@@ -19,11 +19,16 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.models import Display
 from app.money import cents_to_da, da_to_cents
-from app.services import StockError, create_display, deactivate_display, update_display
+from app.services import (
+    StockError,
+    create_display,
+    deactivate_display,
+    list_categories,
+    update_display,
+)
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, field_label
 
 QUALITY_CHOICES = ["Original", "Incell", "OLED", "AMOLED", "Compatible", "LCD"]
-CATEGORY_CHOICES = ["Afficheur", "Batterie", "Autre"]
 
 
 class DisplayDialog(QDialog):
@@ -58,7 +63,8 @@ class DisplayDialog(QDialog):
 
         self.category_input = QComboBox()
         self.category_input.setEditable(True)
-        self.category_input.addItems(CATEGORY_CHOICES)
+        with session_scope() as session:
+            self.category_input.addItems([c.name for c in list_categories(session)])
         form.addRow(field_label("Catégorie"), self.category_input)
 
         self.brand_input = QLineEdit()

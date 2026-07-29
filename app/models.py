@@ -14,6 +14,23 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
+class Category(Base):
+    """Une catégorie de produit (ex : Afficheur, Batterie) — gérée par
+    l'utilisateur dans les Paramètres, et réutilisée partout où une
+    catégorie de produit est proposée (voir app/ui/display_dialog.py)."""
+
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
+
+    def __repr__(self) -> str:
+        return f"<Category {self.name}>"
+
+
 class Display(Base):
     """Une pièce en stock (afficheur, batterie ou autre — voir `category`)."""
 

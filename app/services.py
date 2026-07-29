@@ -12,7 +12,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Display, Repair, RepairItem, Reseller, StockMovement, Supplier
+from app.models import Category, Display, Repair, RepairItem, Reseller, StockMovement, Supplier
 
 SalePriceType = Literal["retail", "wholesale"]
 
@@ -677,4 +677,75 @@ def update_supplier(
 def deactivate_supplier(session: Session, supplier_id: int) -> None:
     supplier = get_supplier(session, supplier_id)
     supplier.is_active = False
+    session.flush()
+
+
+# ----------------------------------------------------------------------
+# Catégories de produits
+#
+# Gérées par l'utilisateur (Paramètres > Catégories) plutôt que codées en
+# dur — toute catégorie créée ici apparaît automatiquement dans le
+# formulaire d'ajout/modification de produit (voir app/ui/display_dialog.py).
+# ----------------------------------------------------------------------
+
+
+def list_categories(session: Session) -> list[Category]:
+    return list(session.scalars(select(Category).order_by(Category.name)).all())
+
+
+def get_category(session: Session, category_id: int) -> Category:
+    category = session.get(Category, category_id)
+    if category is None:
+        raise StockError("Cette catégorie n'existe pas ou a été supprimée.")
+    return category
+
+
+def create_category(session: Session, *, name: str) -> Category:
+    name = name.strip()
+    if not name:
+        raise StockError("Le nom de la catégorie est obligatoire.")
+
+    existing = session.scalar(select(Category).where(Category.name == name))
+    if existing is not None:
+        raise StockError(f"La catégorie « {name} » existe déjà.")
+
+    category = Category(name=name)
+    session.add(category)
+    session.flush()
+    return category
+
+
+def update_category(session: Session, category_id: int, *, name: str) -> Category:
+    category = get_category(session, category_id)
+    name = name.strip()
+    if not name:
+        raise StockError("Le nom de la catégorie est obligatoire.")
+
+    existing = session.scalar(
+        select(Category).where(Category.name == name, Category.id != category_id)
+    )
+    if existing is not None:
+        raise StockError(f"La catégorie « {name} » existe déjà.")
+
+    old_name = category.name
+    category.name = name
+    session.flush()
+
+    if old_name != name:
+        for display in session.scalars(
+            select(Display).where(Display.category == old_name)
+        ):
+            display.category = name
+        session.flush()
+
+    return category
+
+
+def delete_category(session: Session, category_id: int) -> None:
+    """Supprime définitivement une catégorie (pas de suppression logique —
+    contrairement aux produits/contacts, une catégorie n'a pas d'historique
+    propre). Les produits qui l'utilisaient gardent leur valeur texte
+    actuelle : elle redevient simplement une catégorie libre, non gérée."""
+    category = get_category(session, category_id)
+    session.delete(category)
     session.flush()

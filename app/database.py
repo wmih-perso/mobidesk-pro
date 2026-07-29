@@ -142,6 +142,27 @@ def _migrate_repairs_schema(engine) -> None:
         connection.commit()
 
 
+_DEFAULT_CATEGORIES = ["Afficheur", "Batterie", "Autre"]
+
+
+def _seed_default_categories(engine) -> None:
+    """Peuple la table `categories` avec les catégories historiquement
+    codées en dur dans display_dialog.py, uniquement si elle est encore
+    vide (première exécution après cette fonctionnalité) — n'écrase jamais
+    des catégories déjà personnalisées par l'utilisateur."""
+    with engine.connect() as connection:
+        (count,) = connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM categories"
+        ).fetchone()
+        if count == 0:
+            for name in _DEFAULT_CATEGORIES:
+                connection.exec_driver_sql(
+                    "INSERT INTO categories (name, created_at) VALUES (?, CURRENT_TIMESTAMP)",
+                    (name,),
+                )
+        connection.commit()
+
+
 def _ensure_indexes(engine) -> None:
     """Crée les index de performance manquants sur une base déjà existante.
 
@@ -166,6 +187,7 @@ def _ensure_indexes(engine) -> None:
         "CREATE INDEX IF NOT EXISTS ix_repair_items_display_id ON repair_items (display_id)",
         "CREATE INDEX IF NOT EXISTS ix_resellers_name ON resellers (name)",
         "CREATE INDEX IF NOT EXISTS ix_suppliers_name ON suppliers (name)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_categories_name ON categories (name)",
     ]
     with engine.connect() as connection:
         for statement in statements:
@@ -187,6 +209,7 @@ def init_engine(database_path: Path | str | None = None):
     _migrate_stock_movements_schema(_engine)
     _migrate_displays_schema(_engine)
     _migrate_repairs_schema(_engine)
+    _seed_default_categories(_engine)
     _ensure_indexes(_engine)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine

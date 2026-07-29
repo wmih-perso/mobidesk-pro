@@ -6,12 +6,16 @@ from app.services import (
     apply_stock_batch,
     count_low_stock_displays,
     count_movements,
+    create_category,
     create_display,
     create_reseller,
     create_supplier,
     deactivate_display,
+    delete_category,
+    list_categories,
     list_displays,
     list_movements,
+    update_category,
     update_display,
 )
 
@@ -361,3 +365,49 @@ def test_list_displays_filters_by_category(db_session):
     results = list_displays(db_session, category="Batterie")
 
     assert [d.reference for d in results] == ["BAT-001"]
+
+
+def test_list_categories_returns_them_sorted_by_name(db_session):
+    create_category(db_session, name="Batterie")
+    create_category(db_session, name="Afficheur")
+
+    names = [c.name for c in list_categories(db_session)]
+
+    assert names == ["Afficheur", "Batterie"]
+
+
+def test_create_category_rejects_duplicate_name(db_session):
+    create_category(db_session, name="Afficheur")
+
+    with pytest.raises(StockError):
+        create_category(db_session, name="Afficheur")
+
+
+def test_create_category_adds_new_choice(db_session):
+    category = create_category(db_session, name="Coque")
+
+    names = [c.name for c in list_categories(db_session)]
+    assert category.name == "Coque"
+    assert "Coque" in names
+
+
+def test_update_category_renames_and_updates_existing_displays(db_session):
+    category = create_category(db_session, name="Coque")
+    _create_sample(db_session, reference="COQ-001", category="Coque")
+
+    update_category(db_session, category.id, name="Coques")
+
+    names = [c.name for c in list_categories(db_session)]
+    assert "Coques" in names
+    assert "Coque" not in names
+    [display] = list_displays(db_session, category="Coques")
+    assert display.reference == "COQ-001"
+
+
+def test_delete_category_removes_it_from_the_list(db_session):
+    category = create_category(db_session, name="Coque")
+
+    delete_category(db_session, category.id)
+
+    names = [c.name for c in list_categories(db_session)]
+    assert "Coque" not in names

@@ -45,6 +45,7 @@ from app.services import (
     list_movements,
     sum_profit_cents,
 )
+from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_tab import ContactsTab
 from app.ui.display_dialog import DisplayDialog
@@ -530,6 +531,9 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(info_label)
 
         card_layout.addSpacing(12)
+        card_layout.addWidget(self._build_categories_section())
+
+        card_layout.addSpacing(12)
         card_layout.addWidget(self._build_database_section())
 
         card_layout.addSpacing(12)
@@ -540,6 +544,29 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(card)
         return page
+
+    def _build_categories_section(self) -> QWidget:
+        section = QFrame()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(8)
+
+        label = QLabel("Catégories de produits")
+        label.setStyleSheet("font-weight: 700;")
+        section_layout.addWidget(label)
+
+        hint = QLabel(
+            "Les catégories ajoutées ici apparaissent automatiquement dans "
+            "le formulaire d'ajout d'un produit."
+        )
+        hint.setStyleSheet("color: #8991ac; font-size: 12px;")
+        hint.setWordWrap(True)
+        section_layout.addWidget(hint)
+
+        self.category_panel = CategoryPanel()
+        section_layout.addWidget(self.category_panel)
+
+        return section
 
     def _build_database_section(self) -> QWidget:
         section = QFrame()
