@@ -756,12 +756,12 @@ class MainWindow(QMainWindow):
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(8)
 
-        label = QLabel("Sauvegarde automatique — Google Drive")
+        label = QLabel("Sauvegarde automatique — Cloud")
         label.setStyleSheet("font-weight: 700;")
         section_layout.addWidget(label)
 
         hint = QLabel(
-            "La base de données est envoyée automatiquement sur Google Drive "
+            "La base de données est envoyée automatiquement vers le cloud "
             "chaque jour à l'heure configurée (si l'application est ouverte)."
         )
         hint.setStyleSheet("color: #8991ac; font-size: 12px;")
