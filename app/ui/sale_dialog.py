@@ -466,9 +466,10 @@ class SaleDialog(QDialog):
                 unit_price = round(unit_price * (1 - discount_ratio))
             lines.append((display_id, qty_spin.value(), unit_price))
 
+        batch_id = None
         try:
             with session_scope() as session:
-                apply_stock_batch(
+                _, batch_id = apply_stock_batch(
                     session,
                     direction=-1,
                     reason="Vente",
@@ -482,3 +483,7 @@ class SaleDialog(QDialog):
             return
 
         self.accept()
+
+        if batch_id is not None:
+            from app.printing import print_sale_ticket
+            print_sale_ticket(batch_id=batch_id, parent=None)

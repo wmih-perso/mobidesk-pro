@@ -212,6 +212,7 @@ class ContactsPage(QWidget):
                     format_da(unit_price * qty),
                     m.movement_batch_id,
                     m.id,
+                    m.is_sale,
                 ))
         self._detail_panel.load(
             contact_name,
@@ -324,9 +325,9 @@ class _MovementDetailPanel(QWidget):
         )
         card_layout.addWidget(self._header)
 
-        self._table = QTableWidget(0, 7)
+        self._table = QTableWidget(0, 8)
         self._table.setHorizontalHeaderLabels(
-            ["Date", "Pièce", "Type", "Qté", "Prix unit.", "Total", ""]
+            ["Date", "Pièce", "Type", "Qté", "Prix unit.", "Total", "", ""]
         )
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -343,7 +344,9 @@ class _MovementDetailPanel(QWidget):
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(6, 36)
+        self._table.setColumnWidth(7, 36)
         card_layout.addWidget(self._table, stretch=1)
 
         self._empty = QLabel("Aucun mouvement pour ce contact.")
@@ -362,7 +365,7 @@ class _MovementDetailPanel(QWidget):
         has_rows = bool(rows)
         self._table.setVisible(has_rows)
         self._empty.setVisible(not has_rows)
-        for i, (date, ref, type_, qty, price, total, batch_id, movement_id) in enumerate(rows):
+        for i, (date, ref, type_, qty, price, total, batch_id, movement_id, is_sale) in enumerate(rows):
             self._table.setItem(i, 0, QTableWidgetItem(date))
             self._table.setItem(i, 1, QTableWidgetItem(ref))
             type_item = QTableWidgetItem(type_)
@@ -384,6 +387,21 @@ class _MovementDetailPanel(QWidget):
             edit_btn.setToolTip("Modifier ce lot")
             edit_btn.clicked.connect(lambda _c, bid=batch_id, mid=movement_id: self._on_edit(bid, mid))
             self._table.setCellWidget(i, 6, edit_btn)
+
+            if is_sale:
+                print_btn = QPushButton("🖨")
+                print_btn.setObjectName("IconButton")
+                print_btn.setFixedSize(28, 28)
+                print_btn.setStyleSheet("padding: 0; font-size: 13px;")
+                print_btn.setToolTip("Imprimer le ticket")
+                print_btn.clicked.connect(
+                    lambda _c, bid=batch_id, mid=movement_id: self._on_print(bid, mid)
+                )
+                self._table.setCellWidget(i, 7, print_btn)
+
+    def _on_print(self, batch_id: int | None, movement_id: int) -> None:
+        from app.printing import print_sale_ticket
+        print_sale_ticket(batch_id=batch_id, movement_id=movement_id, parent=self)
 
     def _on_edit(self, batch_id: int | None, movement_id: int) -> None:
         from app.ui.movement_edit_dialog import MovementEditDialog

@@ -316,7 +316,7 @@ def apply_stock_batch(
     sale_price_type: SalePriceType | None = None,
     supplier_id: int | None = None,
     reseller_id: int | None = None,
-) -> list[Display]:
+) -> tuple[list[Display], int]:
     """Applique plusieurs lignes de mouvement de stock en une seule
     transaction atomique — même principe que _apply_repair_parts pour les
     réparations. `lines` est une liste de (display_id, quantity,
@@ -345,7 +345,7 @@ def apply_stock_batch(
             movement_batch_id=batch_id,
         )
         results.append(display)
-    return results
+    return results, batch_id
 
 
 def cancel_movement_batch(session: Session, batch_id: int | None = None, movement_id: int | None = None) -> None:

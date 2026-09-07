@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -171,18 +171,34 @@ class BackupPanel(QWidget):
     def _on_test_connection(self) -> None:
         self._status_label.setText("Test en cours…")
         self._status_label.setStyleSheet("color: #64748b;")
+        self._test_btn.setEnabled(False)
         config = self._current_config()
+
         import threading
-        def _run():
-            success, msg = test_connection(config)
-            self._status_label.setText(msg)
-            self._status_label.setStyleSheet(
-                "color: #059669; font-weight:600;" if success else "color: #ef4444;"
-            )
+
+        # Signal helper pour ramener le résultat sur le thread principal
+        class _Bridge(QObject):
+            done = Signal(bool, str)
+
+        bridge = _Bridge()
+        bridge.done.connect(self._on_test_result)
+        bridge.done.connect(lambda: bridge.deleteLater())
+
+        def _run(b=bridge, cfg=config):
+            success, msg = test_connection(cfg)
             if success:
-                config["enabled"] = True
-                save_backup_config(config)
+                cfg["enabled"] = True
+                save_backup_config(cfg)
+            b.done.emit(success, msg)
+
         threading.Thread(target=_run, daemon=True).start()
+
+    def _on_test_result(self, success: bool, msg: str) -> None:
+        self._test_btn.setEnabled(True)
+        self._status_label.setText(msg)
+        self._status_label.setStyleSheet(
+            "color: #059669; font-weight:600;" if success else "color: #ef4444;"
+        )
 
     def _on_backup_now(self) -> None:
         self._status_label.setText("Sauvegarde en cours…")
