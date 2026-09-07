@@ -485,5 +485,6 @@ class SaleDialog(QDialog):
         self.accept()
 
         if batch_id is not None:
-            from app.printing import print_sale_ticket
-            print_sale_ticket(batch_id=batch_id, parent=None)
+            from app.ui.ticket_dialog import TicketPreviewDialog
+            dlg = TicketPreviewDialog(batch_id=batch_id, parent=None)
+            dlg.exec()

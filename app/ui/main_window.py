@@ -96,7 +96,7 @@ DISPLAY_COLUMNS = [
     "",
 ]
 
-MOVEMENT_COLUMNS = ["Date", "Pièce", "Mouvement", "Avant", "Après", "Motif"]
+MOVEMENT_COLUMNS = ["Date", "Pièce", "Mouvement", "Avant", "Après", "Motif", ""]
 
 MONTH_NAMES_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -608,7 +608,14 @@ class MainWindow(QMainWindow):
         self.movements_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
-        self.movements_table.horizontalHeader().setStretchLastSection(True)
+        self.movements_table.horizontalHeader().setStretchLastSection(False)
+        self.movements_table.horizontalHeader().setSectionResizeMode(
+            len(MOVEMENT_COLUMNS) - 2, QHeaderView.ResizeMode.Stretch
+        )
+        self.movements_table.horizontalHeader().setSectionResizeMode(
+            len(MOVEMENT_COLUMNS) - 1, QHeaderView.ResizeMode.Fixed
+        )
+        self.movements_table.setColumnWidth(len(MOVEMENT_COLUMNS) - 1, 36)
         self.movements_table.horizontalHeader().setDefaultAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
@@ -1193,6 +1200,11 @@ class MainWindow(QMainWindow):
     def _refresh_movements(self) -> None:
         self._render_movements_page()
 
+    def _on_print_ticket(self, batch_id: int | None, movement_id: int) -> None:
+        from app.ui.ticket_dialog import TicketPreviewDialog
+        dlg = TicketPreviewDialog(batch_id=batch_id, movement_id=movement_id, parent=self)
+        dlg.exec()
+
     def _render_movements_page(self) -> None:
         with session_scope() as session:
             self._movements_total_count = count_movements(
@@ -1224,6 +1236,9 @@ class MainWindow(QMainWindow):
                     m.quantity_before,
                     m.quantity_after,
                     _reason_with_contact(m),
+                    m.is_sale,
+                    m.movement_batch_id,
+                    m.id,
                 )
                 for m in movements
             ]
@@ -1233,11 +1248,24 @@ class MainWindow(QMainWindow):
         self.movements_empty_state.setVisible(not has_rows)
 
         self.movements_table.setRowCount(len(rows))
-        for row_index, values in enumerate(rows):
+        for row_index, row_data in enumerate(rows):
+            values = row_data[:6]
+            is_sale, batch_id, movement_id = row_data[6], row_data[7], row_data[8]
             for column_index, value in enumerate(values):
                 self.movements_table.setItem(
                     row_index, column_index, QTableWidgetItem(str(value))
                 )
+            if is_sale:
+                from PySide6.QtWidgets import QPushButton
+                print_btn = QPushButton("🖨")
+                print_btn.setObjectName("IconButton")
+                print_btn.setFixedSize(28, 28)
+                print_btn.setStyleSheet("padding: 0; font-size: 13px;")
+                print_btn.setToolTip("Imprimer le ticket")
+                print_btn.clicked.connect(
+                    lambda _c, bid=batch_id, mid=movement_id: self._on_print_ticket(bid, mid)
+                )
+                self.movements_table.setCellWidget(row_index, 6, print_btn)
 
         self.movements_summary_label.setText(
             f"{len(rows)} mouvement(s) affiché(s) sur {self._movements_total_count} au total."

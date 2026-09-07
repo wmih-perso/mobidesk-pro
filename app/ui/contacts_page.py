@@ -400,8 +400,9 @@ class _MovementDetailPanel(QWidget):
                 self._table.setCellWidget(i, 7, print_btn)
 
     def _on_print(self, batch_id: int | None, movement_id: int) -> None:
-        from app.printing import print_sale_ticket
-        print_sale_ticket(batch_id=batch_id, movement_id=movement_id, parent=self)
+        from app.ui.ticket_dialog import TicketPreviewDialog
+        dlg = TicketPreviewDialog(batch_id=batch_id, movement_id=movement_id, parent=self)
+        dlg.exec()
 
     def _on_edit(self, batch_id: int | None, movement_id: int) -> None:
         from app.ui.movement_edit_dialog import MovementEditDialog
