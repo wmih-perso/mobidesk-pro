@@ -73,6 +73,7 @@ class RepairsTab(QWidget):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.repairs_table.horizontalHeader().setStretchLastSection(True)
+        self.repairs_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.repairs_table.doubleClicked.connect(self._on_edit)
         table_layout.addWidget(self.repairs_table, stretch=1)
 

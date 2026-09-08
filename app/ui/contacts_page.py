@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from app.database import session_scope
 from app.money import format_da
+from app.ui.frameless_dialog import FramelessDialog
 from app.services import (
     StockError,
     create_reseller,
@@ -111,6 +112,7 @@ class ContactsPage(QWidget):
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        h.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.contacts_table.setColumnWidth(3, 80)
         self.contacts_table.itemSelectionChanged.connect(self._on_selection_changed)
         list_layout.addWidget(self.contacts_table)
@@ -341,6 +343,7 @@ class _MovementDetailPanel(QWidget):
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        h.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
@@ -426,21 +429,31 @@ class _MovementDetailPanel(QWidget):
 # Dialog Ajouter / Modifier contact
 # ---------------------------------------------------------------------------
 
-class _ContactDialog(QDialog):
+class _ContactDialog(FramelessDialog):
     def __init__(self, mode: ContactMode, contact=None, parent=None) -> None:
         super().__init__(parent)
         is_reseller = mode == "resellers"
         noun = "revendeur" if is_reseller else "fournisseur"
-        self.setWindowTitle(f"{'Modifier' if contact else 'Nouveau'} {noun}")
+        title = f"{'Modifier' if contact else 'Nouveau'} {noun}"
         self.setModal(True)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(400)
 
         self.field_name = contact.name if contact else ""
         self.field_phone = contact.phone if contact else ""
         self.field_address = contact.address if contact else ""
         self.field_notes = contact.notes if contact else ""
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(title))
+        _body = QWidget()
+        _body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(_body)
+        layout.setContentsMargins(24, 16, 24, 20)
+        layout.setSpacing(10)
+        root.addWidget(_body)
+
         form = QFormLayout()
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from app.database import session_scope
 from app.services import StockError, create_reseller, deactivate_reseller, list_resellers
+from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import EmptyState
 
 
@@ -61,6 +62,7 @@ class ResellersPanel(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(2, 36)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.table)
 
         self.empty_state = EmptyState(
@@ -116,15 +118,24 @@ class ResellersPanel(QWidget):
         self.refresh()
 
 
-class _ResellerDialog(QDialog):
+class _ResellerDialog(FramelessDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Nouveau revendeur")
         self.setModal(True)
         self.reseller_name = ""
         self.reseller_phone = ""
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header("Nouveau revendeur"))
+        _body = QWidget()
+        _body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(_body)
+        layout.setContentsMargins(24, 16, 24, 20)
+        layout.setSpacing(10)
+        root.addWidget(_body)
+
         form = QFormLayout()
         form.setSpacing(10)
 

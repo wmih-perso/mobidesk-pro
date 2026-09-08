@@ -209,3 +209,36 @@ _DRAWERS = {
     "wrench": _draw_wrench,
     "users": _draw_users,
 }
+
+
+def home_icon(kind: str, color: str, *, size: int = 64) -> QIcon:
+    """Icône pour la page d'accueil : cercle coloré avec icône blanche à l'intérieur."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    from PySide6.QtGui import QColor, QBrush
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(color)))
+    painter.drawEllipse(0, 0, size, size)
+
+    inner = int(size * 0.58)
+    offset = (size - inner) // 2
+
+    pen = QPen("#ffffff")
+    pen.setWidthF(inner * 0.1)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    painter.translate(offset, offset)
+
+    draw = _DRAWERS.get(kind)
+    if draw is not None:
+        draw(painter, inner, "#ffffff")
+
+    painter.end()
+    return QIcon(pixmap)

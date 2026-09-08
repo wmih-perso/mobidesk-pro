@@ -79,6 +79,7 @@ class ContactListPanel(QWidget):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table.doubleClicked.connect(self._on_edit)
         table_layout.addWidget(self.table, stretch=1)
 

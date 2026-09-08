@@ -10,8 +10,6 @@ from __future__ import annotations
 from typing import Callable, Literal
 
 from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -23,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import session_scope
+from app.ui.frameless_dialog import FramelessDialog
 from app.services import (
     StockError,
     create_reseller,
@@ -48,7 +47,7 @@ _CALLBACKS: dict[ContactKind, tuple[Callable, Callable, Callable, Callable]] = {
 }
 
 
-class ContactDialog(QDialog):
+class ContactDialog(FramelessDialog):
     """Formulaire d'ajout ou de modification d'un client/revendeur/fournisseur."""
 
     def __init__(self, kind: ContactKind, contact_id: int | None = None) -> None:
@@ -57,7 +56,7 @@ class ContactDialog(QDialog):
         self.contact_id = contact_id
         self._create, self._update, self._deactivate, self._get = _CALLBACKS[kind]
         label = _TITLES[kind]
-        self.setWindowTitle(f"Modifier le {label}" if contact_id else f"Ajouter un {label}")
+        self._dialog_label = f"Modifier le {label}" if contact_id else f"Ajouter un {label}"
         self.setMinimumWidth(400)
         self.setModal(True)
 
@@ -66,7 +65,19 @@ class ContactDialog(QDialog):
             self._load_contact(contact_id)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(self._dialog_label))
+
+        from PySide6.QtWidgets import QWidget
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
+        root.addWidget(body)
+
         form = QFormLayout()
         form.setSpacing(10)
         layout.addLayout(form)
@@ -92,24 +103,28 @@ class ContactDialog(QDialog):
         layout.addWidget(self.error_label)
 
         buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(8)
 
         if self.contact_id is not None:
             delete_button = QPushButton("🗑  Supprimer")
             delete_button.setObjectName("DangerButton")
+            delete_button.setFixedHeight(40)
             delete_button.clicked.connect(self._on_delete)
             buttons_row.addWidget(delete_button)
 
         buttons_row.addStretch()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("💾  Enregistrer")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("✕  Annuler")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("SecondaryButton")
-        buttons.accepted.connect(self._on_save)
-        buttons.rejected.connect(self.reject)
-        buttons_row.addWidget(buttons)
+        cancel_btn = QPushButton("✕  Annuler")
+        cancel_btn.setObjectName("SecondaryButton")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.clicked.connect(self.reject)
+        buttons_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton("💾  Enregistrer")
+        save_btn.setFixedHeight(40)
+        save_btn.clicked.connect(self._on_save)
+        buttons_row.addWidget(save_btn)
+
         layout.addLayout(buttons_row)
 
     def _load_contact(self, contact_id: int) -> None:

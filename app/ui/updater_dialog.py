@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout
+from PySide6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from app.updater import UpdateInfo, download_update
+from app.ui.frameless_dialog import FramelessDialog
 
 
 class _DownloadThread(QThread):
@@ -28,7 +29,7 @@ class _DownloadThread(QThread):
         self.finished_ok.emit(path)
 
 
-class UpdaterDialog(QDialog):
+class UpdaterDialog(FramelessDialog):
     """Télécharge la mise à jour avec une barre de progression.
 
     À la fermeture réussie, `downloaded_path` contient le chemin du
@@ -37,12 +38,25 @@ class UpdaterDialog(QDialog):
 
     def __init__(self, info: UpdateInfo) -> None:
         super().__init__()
-        self.setWindowTitle("Téléchargement de la mise à jour")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(400)
         self.setModal(True)
         self.downloaded_path: Path | None = None
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(
+            "⬇  Mise à jour",
+            gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #374151,stop:1 #1565c0)",
+            height=52,
+        ))
+
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(12)
+        root.addWidget(body)
 
         label = QLabel(f"Téléchargement de la version {info.version}...")
         layout.addWidget(label)

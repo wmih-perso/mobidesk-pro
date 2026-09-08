@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import datetime
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import format_da
 from app.period import PERIOD_CHOICES, bounds_for_period
-from app.services import list_sales, sum_profit_cents
+from app.services import list_sales, sum_profit_cents, sum_return_deduction_cents
 from app.ui.widgets import EmptyState, apply_card_shadow
 
 SALE_COLUMNS = [
@@ -87,6 +87,7 @@ class ProfitTab(QWidget):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.sales_table.horizontalHeader().setStretchLastSection(True)
+        self.sales_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         table_layout.addWidget(self.sales_table, stretch=1)
 
         self.sales_empty_state = EmptyState(
@@ -133,15 +134,48 @@ class ProfitTab(QWidget):
 
         layout.addStretch()
 
-        subtitle = QLabel("Bénéfice de la période")
-        subtitle.setStyleSheet("color: #8991ac; font-weight: 600;")
-        layout.addWidget(subtitle)
+        # Bénéfice brut
+        gross_col = QVBoxLayout()
+        gross_col.setSpacing(1)
+        gross_lbl = QLabel("Ventes brutes")
+        gross_lbl.setStyleSheet("color: #8991ac; font-weight: 600; font-size: 11px;")
+        gross_col.addWidget(gross_lbl)
+        self.gross_profit_label = QLabel("0 DA")
+        self.gross_profit_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #374151;")
+        gross_col.addWidget(self.gross_profit_label)
+        layout.addLayout(gross_col)
 
+        minus_lbl = QLabel("−")
+        minus_lbl.setStyleSheet("font-size: 16px; color: #9ca3af; padding: 0 4px;")
+        layout.addWidget(minus_lbl)
+
+        # Retours déduits
+        ret_col = QVBoxLayout()
+        ret_col.setSpacing(1)
+        ret_lbl = QLabel("Retours")
+        ret_lbl.setStyleSheet("color: #8991ac; font-weight: 600; font-size: 11px;")
+        ret_col.addWidget(ret_lbl)
+        self.returns_label = QLabel("0 DA")
+        self.returns_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #ef4444;")
+        ret_col.addWidget(self.returns_label)
+        layout.addLayout(ret_col)
+
+        eq_lbl = QLabel("=")
+        eq_lbl.setStyleSheet("font-size: 16px; color: #9ca3af; padding: 0 4px;")
+        layout.addWidget(eq_lbl)
+
+        # Bénéfice net
+        net_col = QVBoxLayout()
+        net_col.setSpacing(1)
+        net_subtitle = QLabel("Bénéfice net")
+        net_subtitle.setStyleSheet("color: #8991ac; font-weight: 600; font-size: 11px;")
+        net_col.addWidget(net_subtitle)
         self.total_profit_label = QLabel("0 DA")
         self.total_profit_label.setStyleSheet(
             "font-size: 20px; font-weight: 700; color: #2563eb;"
         )
-        layout.addWidget(self.total_profit_label)
+        net_col.addWidget(self.total_profit_label)
+        layout.addLayout(net_col)
 
         self.period_combo.currentTextChanged.connect(self._on_period_changed)
 
@@ -184,9 +218,16 @@ class ProfitTab(QWidget):
                 )
                 for m in sales
             ]
-            total_profit_cents = sum(m.profit_cents for m in sales)
+            gross_cents = sum(m.profit_cents for m in sales)
+            deduction_cents = sum_return_deduction_cents(session, start=start, end=end)
+            net_cents = gross_cents - deduction_cents
 
-        self.total_profit_label.setText(format_da(total_profit_cents))
+        self.gross_profit_label.setText(format_da(gross_cents))
+        self.returns_label.setText(format_da(deduction_cents))
+        self.returns_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {'#ef4444' if deduction_cents > 0 else '#9ca3af'};"
+        )
+        self.total_profit_label.setText(format_da(net_cents))
         self._render_table()
 
     def _render_table(self) -> None:

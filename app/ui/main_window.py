@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -49,11 +49,14 @@ from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_page import ContactsPage
 from app.ui.display_dialog import DisplayDialog
+from app.ui.history_page import HistoriquePage
 from app.ui.profit_tab import ProfitTab
 from app.ui.resellers_panel import ResellersPanel
 from app.ui.sale_dialog import SaleDialog
+from app.ui.sale_page import SalePage
 from app.ui.sidebar import Sidebar
 from app.ui.stock_adjust_dialog import StockAdjustmentDialog, SupplierPurchaseDialog
+from app.ui.users_panel import UsersPanel
 from app.ui.updater_dialog import UpdaterDialog
 from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow
 from app.updater import (
@@ -88,6 +91,7 @@ DISPLAY_COLUMNS = [
     "Marque",
     "Modèle",
     "Qualité",
+    "Prix achat",
     "Prix vente (détail)",
     "Prix vente (gros)",
     "Quantité",
@@ -111,10 +115,9 @@ APP_ICON_PATH = Path(__file__).resolve().parent / "resources" / "app_icon.png"
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("MobiDesk Pro — Stock des produits")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
-        self._locked_pos = None
 
         self._current_page = 1
         self._page_size = PAGE_SIZE_CHOICES[0]
@@ -125,6 +128,8 @@ class MainWindow(QMainWindow):
         self._movements_page_size = PAGE_SIZE_CHOICES[0]
         self._movements_total_count = 0
         self._movements_filter_type = "all"
+
+        self._geometry_locked = False
 
         self._build_ui()
         self._start_clock()
@@ -137,36 +142,14 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Déclenché une seule fois quand la fenêtre est réellement affichée.
-        # On attend 200 ms pour que showMaximized() ait fini de positionner
-        # la fenêtre avant de verrouiller sa géométrie.
-        if self._locked_pos is None:
+        if not self._geometry_locked:
             QTimer.singleShot(200, self._lock_geometry)
 
     def _lock_geometry(self) -> None:
-        self._locked_pos = self.pos()
-        self.setFixedSize(self.size())
-        self._remove_maximize_button()
+        if not self._geometry_locked:
+            self._geometry_locked = True
+            self.setFixedSize(self.size())
 
-    def _remove_maximize_button(self) -> None:
-        """Retire le bouton Agrandir/Restaurer via l'API Windows (ctypes)."""
-        try:
-            import ctypes
-            import ctypes.wintypes
-            hwnd = int(self.winId())
-            GWL_STYLE = -16
-            WS_MAXIMIZEBOX = 0x00010000
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_STYLE, style & ~WS_MAXIMIZEBOX)
-            SWP_FLAGS = 0x0001 | 0x0002 | 0x0004 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|FRAMECHANGED
-            ctypes.windll.user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FLAGS)
-        except Exception:
-            pass  # Non-Windows ou API indisponible — silencieux
-
-    def moveEvent(self, event):
-        super().moveEvent(event)
-        if self._locked_pos is not None and self.pos() != self._locked_pos:
-            self.move(self._locked_pos)
 
     # ------------------------------------------------------------------
     # Construction de l'interface
@@ -175,105 +158,188 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root_layout = QHBoxLayout(central)
+        root_layout = QVBoxLayout(central)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
         self.sidebar = Sidebar()
         self.sidebar.page_selected.connect(self._on_nav_selected)
         self.sidebar.new_sale_requested.connect(self._on_new_sale)
+        self.sidebar.add_product_requested.connect(self._on_add)
+        self.sidebar.refresh_requested.connect(self._on_manual_refresh)
         root_layout.addWidget(self.sidebar)
 
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-        root_layout.addWidget(content, stretch=1)
-
-        content_layout.addWidget(self._build_header())
-
         self.stack = QStackedWidget()
-        content_layout.addWidget(self.stack, stretch=1)
+        root_layout.addWidget(self.stack, stretch=1)
 
-        self.stack.addWidget(self._build_stock_page())      # index 0
-        self.stack.addWidget(self._build_settings_page())  # index 1
-        self.stack.addWidget(self._build_resellers_page()) # index 2
-        self.stack.addWidget(self._build_categories_page()) # index 3
-        self.stack.addWidget(self._build_suppliers_page()) # index 4
+        self.sale_page = SalePage()                            # index 0
+        self.sale_page.sale_completed.connect(self.refresh)
+        self.stack.addWidget(self.sale_page)
+        self.stack.addWidget(self._build_stock_page())       # index 1
+        self.historique_page = HistoriquePage()              # index 2
+        self.stack.addWidget(self.historique_page)
+        self.profit_tab = ProfitTab()                        # index 3
+        self.stack.addWidget(self.profit_tab)
+        self.stack.addWidget(self._build_settings_page())   # index 4
+        self.stack.addWidget(self._build_resellers_page())  # index 5
+        self.stack.addWidget(self._build_categories_page()) # index 6
+        self.stack.addWidget(self._build_suppliers_page())  # index 7
+        self.users_panel = UsersPanel()                      # index 8
+        self.stack.addWidget(self.users_panel)
 
-        self.sidebar.select_page("dashboard")
+        root_layout.addWidget(self._build_status_bar())
 
-    def _build_header(self) -> QFrame:
-        header = QFrame()
-        header.setObjectName("TopBar")
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(28, 0, 28, 0)
-        layout.setSpacing(14)
+        # Afficher le compte connecté dans la sidebar et la barre de statut
+        from app import session as _session
+        user = _session.get_current_user()
+        if user:
+            self.sidebar.set_current_user(user.display_name, user.role)
+            self._set_status_user(user.display_name, user.role)
 
-        titles = QVBoxLayout()
-        titles.setSpacing(2)
+        self.sidebar.select_page("stock")
+        self.stack.setCurrentIndex(1)
 
-        self.greeting_label = QLabel("Bonjour 👋")
-        self.greeting_label.setObjectName("AppTitle")
-        titles.addWidget(self.greeting_label)
+    def _build_home_page(self) -> QWidget:
+        from app.ui.icons import home_icon
+        page = QWidget()
+        page.setObjectName("HomePage")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(40, 30, 40, 30)
+        outer.setSpacing(0)
 
-        subtitle = QLabel("Voici un aperçu de votre stock aujourd'hui.")
-        subtitle.setObjectName("AppSubtitle")
-        titles.addWidget(subtitle)
+        # En-tête
+        header_row = QHBoxLayout()
+        greeting = QLabel("Bienvenue sur MobiDesk Pro")
+        greeting.setObjectName("HomeGreeting")
+        header_row.addWidget(greeting)
+        header_row.addStretch()
+        self.home_date_label = QLabel("")
+        self.home_date_label.setObjectName("HomeSubtitle")
+        header_row.addWidget(self.home_date_label)
+        outer.addLayout(header_row)
 
-        layout.addLayout(titles)
+        outer.addSpacing(6)
+        sub = QLabel("Gestion de stock et de ventes — Sélectionnez une section pour commencer.")
+        sub.setObjectName("HomeSubtitle")
+        outer.addWidget(sub)
 
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText(
-            "Rechercher par référence, marque ou modèle..."
+        outer.addSpacing(30)
+
+        # Grille de boutons (2 × 4)
+        from PySide6.QtWidgets import QGridLayout
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(18)
+        grid.setContentsMargins(0, 0, 0, 0)
+
+        buttons = [
+            ("monitor",   "Stock",         "#7b1fa2", "stock"),
+            ("list",      "Historique",    "#f57c00", "historique"),
+            ("coin",      "Bénéfices",     "#00897b", "profit"),
+            ("home",      "Vente comptoir","#43a047", "sale"),
+            ("users",     "Clients",       "#1976d2", "resellers"),
+            ("download",  "Fournisseurs",  "#e64a19", "suppliers"),
+            ("tag",       "Catégories",    "#00acc1", "categories"),
+            ("gear",      "Paramètres",    "#546e7a", "settings"),
+        ]
+
+        for idx, (icon_key, label, color, page_key) in enumerate(buttons):
+            row, col = divmod(idx, 4)
+            btn = self._make_home_button(home_icon(icon_key, color, size=64), label, page_key)
+            grid.addWidget(btn, row, col)
+
+        outer.addWidget(grid_widget)
+        outer.addStretch()
+        return page
+
+    def _make_home_button(self, icon, label: str, page_key: str) -> QWidget:
+        card = QFrame()
+        card.setObjectName("HomeCard")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout = QVBoxLayout(card)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(20, 24, 20, 20)
+        layout.setSpacing(12)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(icon.pixmap(QSize(64, 64)))
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+
+        text_label = QLabel(label)
+        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text_label.setStyleSheet("font-size: 13px; font-weight: 700; color: #212121; border: none;")
+        layout.addWidget(text_label)
+
+        card.setFixedSize(160, 140)
+
+        def _on_click(event, key=page_key):
+            if key == "sale":
+                self._on_new_sale()
+            else:
+                self._on_nav_selected(key)
+                self.sidebar.select_page(key)
+
+        card.mousePressEvent = _on_click
+        return card
+
+    def _build_status_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("StatusBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(16)
+
+        # Badge utilisateur connecté
+        self._status_user_badge = QLabel("")
+        self._status_user_badge.setStyleSheet(
+            "background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.30);"
+            " border-radius: 10px; padding: 1px 10px;"
+            " color: white; font-size: 12px; font-weight: 700;"
         )
-        self.search_input.setObjectName("HeaderSearchInput")
-        self.search_input.setMinimumWidth(240)
-        self.search_input.setMaximumWidth(520)
+        self._status_user_badge.hide()
+        layout.addWidget(self._status_user_badge)
 
-        self._search_debounce = QTimer(self)
-        self._search_debounce.setSingleShot(True)
-        self._search_debounce.setInterval(300)
-        self._search_debounce.timeout.connect(self._on_filters_changed)
-        self.search_input.textChanged.connect(lambda: self._search_debounce.start())
-        layout.addWidget(self.search_input)
+        sep0 = QLabel("|")
+        sep0.setObjectName("StatusBarLabel")
+        sep0.hide()
+        self._status_user_sep = sep0
+        layout.addWidget(sep0)
 
-        sale_header_btn = QPushButton("Nouvelle vente")
-        sale_header_btn.setObjectName("SaleHeaderButton")
-        sale_header_btn.clicked.connect(self._on_new_sale)
-        layout.addWidget(sale_header_btn)
-
-        add_product_button = QPushButton("+  Ajouter un produit")
-        add_product_button.clicked.connect(self._on_add)
-        layout.addWidget(add_product_button)
+        self._status_alert_label = QLabel("⚠  Stock bas : 0")
+        self._status_alert_label.setObjectName("StatusBarLabel")
+        layout.addWidget(self._status_alert_label)
 
         layout.addStretch()
 
-        self.datetime_pill = self._build_datetime_pill()
-        layout.addWidget(self.datetime_pill)
-
-        return header
-
-    def _build_datetime_pill(self) -> QFrame:
-        pill = QFrame()
-        pill.setObjectName("DateTimePill")
-        layout = QHBoxLayout(pill)
-        layout.setContentsMargins(14, 8, 14, 8)
-        layout.setSpacing(8)
-
-        icon = QLabel("📅")
-        layout.addWidget(icon)
-
-        texts = QVBoxLayout()
-        texts.setSpacing(0)
         self.date_label = QLabel("")
-        texts.addWidget(self.date_label)
-        self.time_label = QLabel("")
-        self.time_label.setObjectName("DateTimeSubLabel")
-        texts.addWidget(self.time_label)
-        layout.addLayout(texts)
+        self.date_label.setObjectName("StatusBarLabel")
+        layout.addWidget(self.date_label)
 
-        return pill
+        sep = QLabel("|")
+        sep.setObjectName("StatusBarLabel")
+        layout.addWidget(sep)
+
+        self.time_label = QLabel("")
+        self.time_label.setObjectName("StatusBarLabel")
+        layout.addWidget(self.time_label)
+
+        sep2 = QLabel("|")
+        sep2.setObjectName("StatusBarLabel")
+        layout.addWidget(sep2)
+
+        from app.version import APP_VERSION as _V
+        version_label = QLabel(f"v{_V}")
+        version_label.setObjectName("StatusBarLabel")
+        layout.addWidget(version_label)
+
+        return bar
+
+    def _set_status_user(self, display_name: str, role: str) -> None:
+        icon = "🔑" if role == "admin" else "👤"
+        self._status_user_badge.setText(f"{icon}  {display_name}")
+        self._status_user_badge.show()
+        self._status_user_sep.show()
 
     def _start_backup_timer(self) -> None:
         """Vérifie toutes les minutes si l'heure de sauvegarde est atteinte."""
@@ -309,28 +375,14 @@ class MainWindow(QMainWindow):
 
     def _update_clock(self) -> None:
         now = datetime.datetime.now()
-        self.date_label.setText(f"{now.day} {MONTH_NAMES_FR[now.month - 1]} {now.year}")
+        date_str = f"{now.day} {MONTH_NAMES_FR[now.month - 1]} {now.year}"
+        self.date_label.setText(date_str)
         self.time_label.setText(now.strftime("%H:%M"))
 
     # ---------------- Page « Stock » (tableau de bord + produits) ---------
 
     def _build_stock_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(18)
-
-        layout.addLayout(self._build_stat_cards())
-
-        self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, stretch=1)
-
-        self.tabs.addTab(self._build_displays_tab(), "🖥️  Produits")
-        self.tabs.addTab(self._build_movements_tab(), "📋  Mouvements de stock")
-        self.profit_tab = ProfitTab()
-        self.tabs.addTab(self.profit_tab, "💰  Bénéfices")
-
-        return page
+        return self._build_displays_tab()
 
     def _build_stat_cards(self) -> QHBoxLayout:
         layout = QHBoxLayout()
@@ -359,6 +411,41 @@ class MainWindow(QMainWindow):
         return layout
 
     def _build_displays_tab(self) -> QWidget:
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(24, 16, 24, 20)
+        outer_layout.setSpacing(14)
+
+        # Barre de recherche + actions
+        search_row = QHBoxLayout()
+        search_row.setSpacing(10)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Rechercher par référence, marque ou modèle...")
+        self.search_input.setObjectName("PageSearchInput")
+        self.search_input.setMinimumWidth(380)
+        self.search_input.setMaximumWidth(700)
+
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(300)
+        self._search_debounce.timeout.connect(self._on_filters_changed)
+        self.search_input.textChanged.connect(lambda: self._search_debounce.start())
+        search_row.addWidget(self.search_input)
+
+        search_row.addStretch()
+
+        sale_btn = QPushButton("🛒  Nouvelle vente")
+        sale_btn.clicked.connect(self._on_new_sale)
+        search_row.addWidget(sale_btn)
+
+        add_btn = QPushButton("+  Ajouter un produit")
+        add_btn.clicked.connect(self._on_add)
+        search_row.addWidget(add_btn)
+
+        outer_layout.addLayout(search_row)
+        outer_layout.addLayout(self._build_stat_cards())
+
         container = QFrame()
         container.setObjectName("Card")
         apply_card_shadow(container)
@@ -422,7 +509,8 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._build_pagination_bar())
 
-        return container
+        outer_layout.addWidget(container, stretch=1)
+        return outer
 
     def _build_pagination_bar(self) -> QWidget:
         bar = QWidget()
@@ -566,15 +654,15 @@ class MainWindow(QMainWindow):
     def _pill_style(self, active: bool) -> str:
         if active:
             return (
-                "QPushButton { background:#2563eb; color:white; border:none; border-radius:14px;"
+                "QPushButton { background:#00897b; color:white; border:none; border-radius:14px;"
                 " padding:4px 14px; font-size:12px; font-weight:700; }"
-                "QPushButton:hover { background:#1d4ed8; }"
+                "QPushButton:hover { background:#00796b; }"
             )
         return (
-            "QPushButton { background:#f1f5f9; color:#64748b; border:1px solid #e2e8f0;"
+            "QPushButton { background:#f5f5f5; color:#757575; border:1px solid #e0e0e0;"
             " border-radius:14px; padding:4px 14px; font-size:12px; font-weight:600; }"
-            "QPushButton:hover { background:#e2e8f0; color:#334155; }"
-            "QPushButton:checked { background:#2563eb; color:white; border:none; }"
+            "QPushButton:hover { background:#e0f2f1; color:#00695c; }"
+            "QPushButton:checked { background:#00897b; color:white; border:none; }"
         )
 
     def _on_movement_filter(self, filter_key: str) -> None:
@@ -675,12 +763,12 @@ class MainWindow(QMainWindow):
 
     def _build_resellers_page(self) -> QWidget:
         self.resellers_contacts_page = ContactsPage("resellers")
-        self.resellers_contacts_page.stock_changed.connect(self._refresh_displays)
+        self.resellers_contacts_page.stock_changed.connect(self.refresh)
         return self.resellers_contacts_page
 
     def _build_suppliers_page(self) -> QWidget:
         self.suppliers_contacts_page = ContactsPage("suppliers")
-        self.suppliers_contacts_page.stock_changed.connect(self._refresh_displays)
+        self.suppliers_contacts_page.stock_changed.connect(self.refresh)
         return self.suppliers_contacts_page
 
     def _build_categories_page(self) -> QWidget:
@@ -958,20 +1046,20 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_nav_selected(self, page_key: str) -> None:
-        if page_key in ("dashboard", "stock", "displays"):
+        if page_key == "ventes":
+            self.stack.setCurrentIndex(0)
+        elif page_key in ("dashboard", "stock", "displays", "home"):
             self.search_input.clear()
             self._set_only_low_stock(False)
-            self.stack.setCurrentIndex(0)
-            self.tabs.setCurrentIndex(0)
+            self.stack.setCurrentIndex(1)
         elif page_key in ("historique", "movements"):
-            self.stack.setCurrentIndex(0)
-            self.tabs.setCurrentIndex(1)
+            self.historique_page.refresh()
+            self.stack.setCurrentIndex(2)
         elif page_key == "profit":
-            self.stack.setCurrentIndex(0)
-            self.tabs.setCurrentIndex(2)
+            self.profit_tab.refresh()
+            self.stack.setCurrentIndex(3)
         elif page_key == "alerts":
-            self.stack.setCurrentIndex(0)
-            self.tabs.setCurrentIndex(0)
+            self.stack.setCurrentIndex(1)
             self._set_only_low_stock(True)
         elif page_key == "purchase":
             self._on_purchase()
@@ -980,13 +1068,16 @@ class MainWindow(QMainWindow):
             self._on_stock_adjust()
             self.sidebar.select_page(self._active_nav_key())
         elif page_key == "settings":
-            self.stack.setCurrentIndex(1)
-        elif page_key == "resellers":
-            self.stack.setCurrentIndex(2)
-        elif page_key == "categories":
-            self.stack.setCurrentIndex(3)
-        elif page_key == "suppliers":
             self.stack.setCurrentIndex(4)
+        elif page_key == "resellers":
+            self.stack.setCurrentIndex(5)
+        elif page_key == "categories":
+            self.stack.setCurrentIndex(6)
+        elif page_key == "suppliers":
+            self.stack.setCurrentIndex(7)
+        elif page_key == "accounts":
+            self.users_panel.refresh()
+            self.stack.setCurrentIndex(8)
 
     def _set_only_low_stock(self, value: bool) -> None:
         if value == self._only_low_stock:
@@ -996,18 +1087,24 @@ class MainWindow(QMainWindow):
 
     def _active_nav_key(self) -> str:
         idx = self.stack.currentIndex()
+        if idx == 0:
+            return "ventes"
         if idx == 1:
-            return "settings"
+            return "stock"
         if idx == 2:
-            return "resellers"
-        if idx == 3:
-            return "categories"
-        if idx == 4:
-            return "suppliers"
-        if self.tabs.currentIndex() == 2:
-            return "profit"
-        if self.tabs.currentIndex() == 1:
             return "historique"
+        if idx == 3:
+            return "profit"
+        if idx == 4:
+            return "settings"
+        if idx == 5:
+            return "resellers"
+        if idx == 6:
+            return "categories"
+        if idx == 7:
+            return "suppliers"
+        if idx == 8:
+            return "accounts"
         return "stock"
 
     # ------------------------------------------------------------------
@@ -1018,10 +1115,23 @@ class MainWindow(QMainWindow):
         self._current_page = 1
         self.refresh()
 
+    def _on_manual_refresh(self) -> None:
+        self.refresh()
+        # Forcer aussi le rafraîchissement des pages contacts actives
+        idx = self.stack.currentIndex()
+        if idx == 5:
+            self.resellers_contacts_page.refresh()
+        elif idx == 7:
+            self.suppliers_contacts_page.refresh()
+
     def refresh(self) -> None:
         self._refresh_displays()
-        self._refresh_movements()
-        self.profit_tab.refresh()
+        self.sale_page._reload_products()
+        # Rafraîchir historique et bénéfices seulement si visible pour éviter des requêtes inutiles
+        if self.stack.currentIndex() == 2:
+            self.historique_page.refresh()
+        if self.stack.currentIndex() == 3:
+            self.profit_tab.refresh()
 
     def _refresh_displays(self) -> None:
         with session_scope() as session:
@@ -1041,6 +1151,11 @@ class MainWindow(QMainWindow):
         self.stock_value_card.set_value(str(total_qty))
         self.stock_balance_card.set_value(format_da(stock_value_cents))
         self.sidebar.set_low_stock_badge(low_stock_count)
+        alert_text = f"⚠  Stock bas : {low_stock_count}" if low_stock_count > 0 else "Stock : OK"
+        self._status_alert_label.setText(alert_text)
+        self._status_alert_label.setObjectName(
+            "StatusBarAlert" if low_stock_count > 0 else "StatusBarLabel"
+        )
 
         self._render_current_page(total_count)
 
@@ -1081,6 +1196,7 @@ class MainWindow(QMainWindow):
                 d.brand,
                 d.phone_model,
                 d.quality,
+                format_da(d.purchase_price_cents),
                 format_da(d.sale_price_retail_cents),
                 format_da(d.sale_price_wholesale_cents),
                 d.quantity,
@@ -1311,6 +1427,10 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def _on_new_sale(self) -> None:
+        self.stack.setCurrentIndex(0)
+        self.sidebar.select_page("ventes")
+
+    def _on_new_sale_dialog(self) -> None:
         dialog = SaleDialog(self._selected_display_id())
         if dialog.exec() == SaleDialog.DialogCode.Accepted:
             self.refresh()
@@ -1326,9 +1446,9 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def _on_row_sale(self, display_id: int) -> None:
-        dialog = SaleDialog(display_id)
-        if dialog.exec() == SaleDialog.DialogCode.Accepted:
-            self.refresh()
+        self.sale_page.add_product(display_id)
+        self.stack.setCurrentIndex(0)
+        self.sidebar.select_page("ventes")
 
     def _on_row_purchase(self, display_id: int) -> None:
         dialog = SupplierPurchaseDialog(display_id)
@@ -1384,6 +1504,7 @@ class MainWindow(QMainWindow):
                             d.min_stock,
                         ]
                     )
+                    # Note: ordre CSV aligné sur DISPLAY_COLUMNS (prix achat avant prix vente)
         except OSError as error:
             QMessageBox.warning(self, "Erreur d'export", f"Impossible d'écrire le fichier : {error}")
             return

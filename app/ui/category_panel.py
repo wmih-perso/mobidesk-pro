@@ -60,6 +60,7 @@ class CategoryPanel(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table.setMaximumHeight(220)
         self.table.doubleClicked.connect(self._on_edit)
         outer.addWidget(self.table)

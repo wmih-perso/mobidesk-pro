@@ -1,10 +1,10 @@
-"""Dialogue de vente unifié — style POS (caisse enregistreuse)."""
+"""Page de vente comptoir — interface POS intégrée (pas de dialog)."""
 
 from __future__ import annotations
 
 import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -25,8 +25,14 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
-from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
+
+MONTH_NAMES_FR = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+
+DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
 def _spin_cell(widget: QWidget, v_margin: int = 4) -> QWidget:
@@ -39,27 +45,29 @@ def _spin_cell(widget: QWidget, v_margin: int = 4) -> QWidget:
     return wrapper
 
 
-def _centered(widget: QWidget, h_margin: int = 4, v_margin: int = 4) -> QWidget:
+def _centered(widget: QWidget) -> QWidget:
     wrapper = QWidget()
     wrapper.setStyleSheet("background: transparent;")
     layout = QHBoxLayout(wrapper)
-    layout.setContentsMargins(h_margin, v_margin, h_margin, v_margin)
+    layout.setContentsMargins(4, 4, 4, 4)
     layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
     layout.addWidget(widget)
     return wrapper
 
 
-class SaleDialog(FramelessDialog):
-    """Vente multi-pièces — interface style caisse."""
+class SalePage(QWidget):
+    """Page vente comptoir — réinitialisée après chaque vente validée."""
 
-    def __init__(self, display_id: int | None = None) -> None:
+    sale_completed = Signal()
+
+    def __init__(self) -> None:
         super().__init__()
-        self.resize(1000, 700)
-        self.setMinimumSize(800, 560)
-        self.setModal(True)
         self._line_rows: list[tuple[int, int, int, ModernSpinBox, ModernDoubleSpinBox]] = []
         self._display_choices: list[tuple[int, str, str, str, int, int]] = []
         self._build_ui()
+        self._reload_products()
+
+    def _reload_products(self) -> None:
         with session_scope() as session:
             self._display_choices = [
                 (
@@ -72,8 +80,19 @@ class SaleDialog(FramelessDialog):
                 )
                 for d in list_displays(session)
             ]
-        if display_id is not None:
-            self._preload_display(display_id)
+            resellers = list_resellers(session)
+
+        current_reseller_id = self.reseller_combo.currentData() if hasattr(self, "reseller_combo") else None
+        self.reseller_combo.blockSignals(True)
+        self.reseller_combo.clear()
+        self.reseller_combo.addItem("— Sélectionner —", None)
+        restore_index = 0
+        for i, r in enumerate(resellers, start=1):
+            self.reseller_combo.addItem(f"{r.name}" + (f"  ·  {r.phone}" if r.phone else ""), r.id)
+            if r.id == current_reseller_id:
+                restore_index = i
+        self.reseller_combo.setCurrentIndex(restore_index)
+        self.reseller_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Construction UI
@@ -87,16 +106,17 @@ class SaleDialog(FramelessDialog):
         # ── HEADER SOMBRE ──────────────────────────────────────────────
         header = QFrame()
         header.setStyleSheet("background-color: #1a1a2e; border-radius: 0;")
-        header.setFixedHeight(90)
+        header.setFixedHeight(110)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 10, 20, 10)
-        header_layout.setSpacing(20)
+        header_layout.setContentsMargins(24, 14, 24, 14)
+        header_layout.setSpacing(24)
 
-        # Bloc gauche : Mode de vente + Remise
-        left_info = QVBoxLayout()
-        left_info.setSpacing(6)
-
-        # Toggle détail / gros
+        # Toggle Détail / Gros
+        toggle_col = QVBoxLayout()
+        toggle_col.setSpacing(4)
+        mode_lbl = QLabel("Mode de vente")
+        mode_lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 600;")
+        toggle_col.addWidget(mode_lbl)
         toggle_row = QHBoxLayout()
         toggle_row.setSpacing(4)
         self.retail_button = QPushButton("Détail")
@@ -105,65 +125,64 @@ class SaleDialog(FramelessDialog):
         self._style_toggle(self.retail_button, True)
         self.retail_button.clicked.connect(lambda: self._set_sale_type("retail"))
         toggle_row.addWidget(self.retail_button)
-
         self.wholesale_button = QPushButton("Gros")
         self.wholesale_button.setCheckable(True)
         self._style_toggle(self.wholesale_button, False)
         self.wholesale_button.clicked.connect(lambda: self._set_sale_type("wholesale"))
         toggle_row.addWidget(self.wholesale_button)
         toggle_row.addStretch()
-        left_info.addLayout(toggle_row)
+        toggle_col.addLayout(toggle_row)
+        header_layout.addLayout(toggle_col)
+
+        # Séparateur
+        self._add_vsep(header_layout)
 
         # Remise
-        remise_row = QHBoxLayout()
-        remise_row.setSpacing(8)
-        remise_lbl = QLabel("Remise :")
-        remise_lbl.setStyleSheet("color: #9ca3af; font-size: 12px;")
-        remise_row.addWidget(remise_lbl)
+        remise_col = QVBoxLayout()
+        remise_col.setSpacing(4)
+        remise_lbl_title = QLabel("Remise")
+        remise_lbl_title.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 600;")
+        remise_col.addWidget(remise_lbl_title)
         self.remise_spin = ModernDoubleSpinBox()
         self.remise_spin.setRange(0, 99_999_999)
         self.remise_spin.setDecimals(0)
         self.remise_spin.setSuffix(" DA")
-        self.remise_spin.setFixedWidth(120)
+        self.remise_spin.setFixedWidth(130)
         self.remise_spin.setStyleSheet(
             "QDoubleSpinBox { background: #2d2d44; color: white; border: 1px solid #444; "
-            "border-radius: 4px; padding: 4px 8px; font-size: 13px; }"
+            "border-radius: 4px; padding: 6px 10px; font-size: 15px; font-weight: 600; }"
         )
         self.remise_spin.valueChanged.connect(self._update_total)
-        remise_row.addWidget(self.remise_spin)
-        remise_row.addStretch()
-        left_info.addLayout(remise_row)
+        remise_col.addWidget(self.remise_spin)
+        header_layout.addLayout(remise_col)
 
-        header_layout.addLayout(left_info)
+        # Séparateur
+        self._add_vsep(header_layout)
 
-        # Séparateur vertical
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.VLine)
-        sep1.setStyleSheet("background: #444; border: none;")
-        sep1.setFixedWidth(1)
-        header_layout.addWidget(sep1)
-
-        # Bloc centre : date + infos vente
-        center_info = QVBoxLayout()
-        center_info.setSpacing(4)
+        # Date + infos
+        date_col = QVBoxLayout()
+        date_col.setSpacing(2)
         now = datetime.datetime.now()
-        day_names = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-        day_str = day_names[now.weekday()]
-        date_str = f"{day_str}  {now.day} {now.strftime('%B %Y')}"
-        date_lbl = QLabel(date_str.capitalize())
-        date_lbl.setStyleSheet("color: #d1d5db; font-size: 12px; font-weight: 600;")
-        center_info.addWidget(date_lbl)
-        vente_lbl = QLabel("Nouvelle vente")
-        vente_lbl.setStyleSheet("color: #9ca3af; font-size: 11px;")
-        center_info.addWidget(vente_lbl)
-        header_layout.addLayout(center_info)
+        date_str = f"{DAY_NAMES_FR[now.weekday()].capitalize()}  {now.day} {MONTH_NAMES_FR[now.month - 1]} {now.year}"
+        self._date_label = QLabel(date_str)
+        self._date_label.setStyleSheet("color: #d1d5db; font-size: 15px; font-weight: 700;")
+        date_col.addWidget(self._date_label)
+        sub_lbl = QLabel("Vente comptoir")
+        sub_lbl.setStyleSheet("color: #9ca3af; font-size: 13px;")
+        date_col.addWidget(sub_lbl)
+        header_layout.addLayout(date_col)
+
+        # Séparateur
+        self._add_vsep(header_layout)
 
         # Revendeur (masqué par défaut)
-        self.reseller_col = QVBoxLayout()
-        self.reseller_col.setSpacing(2)
+        self.reseller_widget = QWidget()
+        reseller_col = QVBoxLayout(self.reseller_widget)
+        reseller_col.setSpacing(2)
+        reseller_col.setContentsMargins(0, 0, 0, 0)
         reseller_title = QLabel("Revendeur")
-        reseller_title.setStyleSheet("color: #9ca3af; font-size: 11px;")
-        self.reseller_col.addWidget(reseller_title)
+        reseller_title.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 600;")
+        reseller_col.addWidget(reseller_title)
         self.reseller_combo = QComboBox()
         self.reseller_combo.addItem("— Sélectionner —", None)
         with session_scope() as session:
@@ -173,45 +192,29 @@ class SaleDialog(FramelessDialog):
                 )
         self.reseller_combo.setStyleSheet(
             "QComboBox { background: #2d2d44; color: white; border: 1px solid #444; "
-            "border-radius: 4px; padding: 4px 8px; font-size: 12px; min-width: 160px; }"
+            "border-radius: 4px; padding: 6px 10px; font-size: 14px; min-width: 180px; }"
             "QComboBox::drop-down { border: none; width: 20px; }"
         )
-        self.reseller_col.addWidget(self.reseller_combo)
-        self.reseller_widget = QWidget()
-        self.reseller_widget.setLayout(self.reseller_col)
+        reseller_col.addWidget(self.reseller_combo)
         self.reseller_widget.setVisible(False)
         header_layout.addWidget(self.reseller_widget)
 
         header_layout.addStretch()
 
-        # Bloc droit : Total grand
+        # Total grand
         total_col = QVBoxLayout()
         total_col.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         total_title = QLabel("Total :")
-        total_title.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 600;")
+        total_title.setStyleSheet("color: #9ca3af; font-size: 15px; font-weight: 700;")
         total_title.setAlignment(Qt.AlignmentFlag.AlignRight)
         total_col.addWidget(total_title)
         self.total_label = QLabel("0,00")
         self.total_label.setStyleSheet(
-            "color: #00e676; font-size: 36px; font-weight: 900; letter-spacing: -1px;"
+            "color: #00e676; font-size: 34px; font-weight: 900; letter-spacing: -1px;"
         )
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         total_col.addWidget(self.total_label)
         header_layout.addLayout(total_col)
-
-        # Bouton fermer intégré
-        close_btn = QPushButton("✕")
-        close_btn.setObjectName("FramelessCloseBtn")
-        close_btn.setFixedSize(38, 38)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self.reject)
-        header_layout.addWidget(close_btn)
-
-        # Draggable
-        self._drag_header = header
-        header.mousePressEvent = self._header_mouse_press
-        header.mouseMoveEvent = self._header_mouse_move
-        header.mouseReleaseEvent = self._header_mouse_release
 
         root.addWidget(header)
 
@@ -219,15 +222,15 @@ class SaleDialog(FramelessDialog):
         body = QWidget()
         body.setStyleSheet("background: #f5f5f5;")
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(16, 12, 16, 8)
-        body_layout.setSpacing(8)
+        body_layout.setContentsMargins(20, 14, 20, 10)
+        body_layout.setSpacing(10)
 
         # Barre de recherche
         search_row = QHBoxLayout()
         search_row.setSpacing(10)
-        search_icon_lbl = QLabel("Recherche :")
-        search_icon_lbl.setStyleSheet("font-weight: 700; color: #374151; font-size: 13px;")
-        search_row.addWidget(search_icon_lbl)
+        search_lbl = QLabel("Recherche :")
+        search_lbl.setStyleSheet("font-weight: 700; color: #374151; font-size: 13px;")
+        search_row.addWidget(search_lbl)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Référence, modèle, catégorie...")
         self.search_input.setStyleSheet(
@@ -249,9 +252,9 @@ class SaleDialog(FramelessDialog):
         search_row.addWidget(add_btn)
         body_layout.addLayout(search_row)
 
-        # Liste de résultats de recherche
+        # Liste de résultats
         self.search_results = QListWidget()
-        self.search_results.setFixedHeight(120)
+        self.search_results.setFixedHeight(130)
         self.search_results.setVisible(False)
         self.search_results.setStyleSheet(
             "QListWidget { background: white; border: 1px solid #e0e0e0; border-radius: 6px; "
@@ -270,7 +273,7 @@ class SaleDialog(FramelessDialog):
         )
         self.lines_table.setStyleSheet(
             "QTableWidget { background: white; border: 1px solid #e0e0e0; border-radius: 8px; "
-            "gridline-color: #f0f0f0; }"
+            "gridline-color: #f0f0f0; alternate-background-color: #f8fdfc; }"
             "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
             "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
@@ -278,13 +281,13 @@ class SaleDialog(FramelessDialog):
             "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
             "QTableWidget::item:hover { background: #e0f2f1; }"
         )
-        tbl_header = self.lines_table.horizontalHeader()
-        tbl_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        tbl_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        tbl_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        tbl_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        tbl_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        tbl_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        tbl_hdr = self.lines_table.horizontalHeader()
+        tbl_hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        tbl_hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl_hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        tbl_hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        tbl_hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        tbl_hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self.lines_table.setColumnWidth(0, 110)
         self.lines_table.setColumnWidth(2, 160)
         self.lines_table.setColumnWidth(3, 130)
@@ -292,77 +295,75 @@ class SaleDialog(FramelessDialog):
         self.lines_table.setColumnWidth(5, 46)
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.verticalHeader().setDefaultSectionSize(48)
-        self.lines_table.setMinimumHeight(120)
         self.lines_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.lines_table.setShowGrid(True)
         self.lines_table.setAlternatingRowColors(True)
-        self.lines_table.setStyleSheet(
-            self.lines_table.styleSheet()
-            + "QTableWidget { alternate-background-color: #f8fdfc; }"
-        )
         body_layout.addWidget(self.lines_table, stretch=1)
 
-        # Erreur
+        # Message erreur
         self.error_label = QLabel("")
-        self.error_label.setObjectName("ErrorLabel")
-        self.error_label.setStyleSheet("color: #dc2626; font-size: 12px;")
+        self.error_label.setStyleSheet("color: #dc2626; font-size: 12px; padding: 2px 0;")
         self.error_label.setWordWrap(True)
         body_layout.addWidget(self.error_label)
 
         root.addWidget(body, stretch=1)
 
-        # ── BARRE DE BOUTONS BAS ───────────────────────────────────────
+        # ── BARRE BAS ──────────────────────────────────────────────────
         footer = QFrame()
-        footer.setStyleSheet(
-            "QFrame { background: #1a1a2e; border-top: 2px solid #00897b; }"
-        )
+        footer.setStyleSheet("QFrame { background: #1a1a2e; border-top: 2px solid #00897b; }")
         footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 10, 16, 10)
-        footer_layout.setSpacing(8)
+        footer_layout.setContentsMargins(20, 10, 20, 10)
+        footer_layout.setSpacing(10)
 
-        # Bouton Annuler (Echap)
-        cancel_btn = self._action_btn("✕  Fermer (Echap)", "#ef4444", "#dc2626")
-        cancel_btn.clicked.connect(self.reject)
-        footer_layout.addWidget(cancel_btn)
+        # Vider le panier
+        clear_btn = self._footer_btn("🗑  Vider le panier", "#374151", "#4b5563")
+        clear_btn.clicked.connect(self._clear_cart)
+        footer_layout.addWidget(clear_btn)
 
         footer_layout.addStretch()
 
-        # Nombre d'articles
-        self.count_label = QLabel("Nombre de produits : 0")
+        # Compteur
+        self.count_label = QLabel("Panier vide")
         self.count_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
         footer_layout.addWidget(self.count_label)
 
-        footer_layout.addSpacing(16)
+        footer_layout.addSpacing(20)
 
-        # Bouton Confirmer
-        self.confirm_btn = self._action_btn("✔  Valider la vente", "#00897b", "#00695c")
-        self.confirm_btn.setMinimumWidth(180)
+        # Valider
+        self.confirm_btn = self._footer_btn("✔  Valider la vente  —  0,00 DA", "#00897b", "#00695c")
+        self.confirm_btn.setMinimumWidth(240)
         self.confirm_btn.clicked.connect(self._on_save)
         footer_layout.addWidget(self.confirm_btn)
 
         root.addWidget(footer)
 
-    def _action_btn(self, text: str, bg: str, bg_hover: str) -> QPushButton:
+    def _footer_btn(self, text: str, bg: str, bg_hover: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setStyleSheet(
             f"QPushButton {{ background: {bg}; color: white; border: none; border-radius: 6px; "
             f"padding: 10px 18px; font-weight: 700; font-size: 13px; }}"
             f"QPushButton:hover {{ background: {bg_hover}; }}"
-            f"QPushButton:pressed {{ background: {bg_hover}; }}"
         )
         return btn
+
+    def _add_vsep(self, layout: QHBoxLayout) -> None:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("background: #333; border: none;")
+        sep.setFixedWidth(1)
+        layout.addWidget(sep)
 
     def _style_toggle(self, btn: QPushButton, active: bool) -> None:
         if active:
             btn.setStyleSheet(
                 "QPushButton { background: #00897b; color: white; border: none; border-radius: 5px; "
-                "padding: 6px 14px; font-weight: 700; font-size: 12px; }"
+                "padding: 8px 18px; font-weight: 700; font-size: 14px; }"
                 "QPushButton:hover { background: #00796b; }"
             )
         else:
             btn.setStyleSheet(
                 "QPushButton { background: #2d2d44; color: #9ca3af; border: none; border-radius: 5px; "
-                "padding: 6px 14px; font-weight: 600; font-size: 12px; }"
+                "padding: 8px 18px; font-weight: 600; font-size: 14px; }"
                 "QPushButton:hover { color: white; background: #3d3d5c; }"
             )
 
@@ -385,14 +386,8 @@ class SaleDialog(FramelessDialog):
         self._update_total()
 
     # ------------------------------------------------------------------
-    # Recherche et lignes
+    # Recherche
     # ------------------------------------------------------------------
-
-    def _preload_display(self, display_id: int) -> None:
-        for d_id, ref, label, cat, retail, wholesale in self._display_choices:
-            if d_id == display_id:
-                self._add_line_row(d_id, ref, label, retail, wholesale, cat)
-                break
 
     def _on_search_changed(self, text: str) -> None:
         text = text.strip().lower()
@@ -411,12 +406,7 @@ class SaleDialog(FramelessDialog):
             self.search_results.setVisible(False)
             return
         for d_id, ref, label, cat, ret, who in matches:
-            parts = []
-            if cat:
-                parts.append(cat)
-            if label:
-                parts.append(label)
-            parts.append(ref)
+            parts = [p for p in [cat, label, ref] if p]
             display_text = "  ·  ".join(parts)
             item = QListWidgetItem(display_text)
             item.setData(Qt.ItemDataRole.UserRole, (d_id, ref, label, cat, ret, who))
@@ -436,6 +426,19 @@ class SaleDialog(FramelessDialog):
         self.search_input.clear()
         self.search_results.clear()
         self.search_results.setVisible(False)
+        self.search_input.setFocus()
+
+    def add_product(self, display_id: int) -> None:
+        """Ajoute un produit depuis la page stock (bouton 🛒)."""
+        self._reload_products()
+        for d_id, ref, label, cat, ret, who in self._display_choices:
+            if d_id == display_id:
+                self._add_line_row(d_id, ref, label, ret, who, cat)
+                break
+
+    # ------------------------------------------------------------------
+    # Lignes du panier
+    # ------------------------------------------------------------------
 
     def _add_line_row(
         self,
@@ -451,14 +454,11 @@ class SaleDialog(FramelessDialog):
         row = self.lines_table.rowCount()
         self.lines_table.insertRow(row)
 
-        # Référence
         ref_item = QTableWidgetItem(ref)
         ref_item.setFlags(ref_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         ref_item.setForeground(Qt.GlobalColor.darkGray)
-        ref_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.lines_table.setItem(row, 0, ref_item)
 
-        # Désignation
         desc = label or ref
         if category:
             desc = f"{label or ref}  ·  {category}"
@@ -466,7 +466,6 @@ class SaleDialog(FramelessDialog):
         desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.lines_table.setItem(row, 1, desc_item)
 
-        # Prix unitaire (éditable via spinbox)
         price_spin = ModernDoubleSpinBox()
         price_spin.setRange(0, 99_999_999)
         price_spin.setDecimals(0)
@@ -477,7 +476,6 @@ class SaleDialog(FramelessDialog):
         price_spin.valueChanged.connect(self._update_total)
         self.lines_table.setCellWidget(row, 2, _spin_cell(price_spin))
 
-        # Quantité
         qty_spin = ModernSpinBox()
         qty_spin.setRange(1, 1_000_000)
         qty_spin.setFixedHeight(34)
@@ -485,14 +483,12 @@ class SaleDialog(FramelessDialog):
         qty_spin.valueChanged.connect(self._update_total)
         self.lines_table.setCellWidget(row, 3, _spin_cell(qty_spin))
 
-        # Montant
         total_item = QTableWidgetItem(format_da(base_price))
         total_item.setFlags(total_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         total_item.setForeground(Qt.GlobalColor.darkGray)
         self.lines_table.setItem(row, 4, total_item)
 
-        # Supprimer
         remove_btn = QPushButton("×")
         remove_btn.setFixedSize(28, 28)
         remove_btn.setStyleSheet(
@@ -515,6 +511,13 @@ class SaleDialog(FramelessDialog):
                 break
         self._update_total()
 
+    def _clear_cart(self) -> None:
+        self.lines_table.setRowCount(0)
+        self._line_rows.clear()
+        self.remise_spin.setValue(0)
+        self.error_label.setText("")
+        self._update_total()
+
     def _update_total(self) -> None:
         subtotal = 0
         for i, (_d_id, _ret, _who, qty_spin, price_spin) in enumerate(self._line_rows):
@@ -525,17 +528,18 @@ class SaleDialog(FramelessDialog):
                 item.setText(format_da(line_total))
         remise = min(da_to_cents(self.remise_spin.value()), subtotal)
         net = max(0, subtotal - remise)
-        # Affichage grand total (chiffre seulement, sans "DA")
         da_val = cents_to_da(net)
         self.total_label.setText(f"{da_val:,.2f}".replace(",", " ").replace(".", ","))
-        self.confirm_btn.setText(f"✔  Valider — {format_da(net)}")
-        self.count_label.setText(f"Nombre de produits : {self.lines_table.rowCount()}")
+        n = self.lines_table.rowCount()
+        self.count_label.setText(f"Nombre de produits : {n}" if n > 0 else "Panier vide")
+        self.confirm_btn.setText(f"✔  Valider la vente  —  {format_da(net)}")
 
     # ------------------------------------------------------------------
-    # Sauvegarde
+    # Validation
     # ------------------------------------------------------------------
 
     def _on_save(self) -> None:
+        self.error_label.setText("")
         if not self._line_rows:
             self.error_label.setText("Ajoutez au moins une pièce au panier.")
             return
@@ -573,7 +577,9 @@ class SaleDialog(FramelessDialog):
             self.error_label.setText(str(error))
             return
 
-        self.accept()
+        self._clear_cart()
+        self._reload_products()
+        self.sale_completed.emit()
 
         if batch_id is not None:
             from app.ui.ticket_dialog import TicketPreviewDialog

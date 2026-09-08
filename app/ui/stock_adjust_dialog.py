@@ -20,7 +20,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
@@ -39,6 +38,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers, list_suppliers
+from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, field_label
 
 # Motifs proposés pour un ajustement de stock (ni achat, ni vente).
@@ -51,7 +51,7 @@ ADJUSTMENT_REASONS = [
 ]
 
 
-class _BaseStockBatchDialog(QDialog):
+class _BaseStockBatchDialog(FramelessDialog):
     """Base commune : recherche produit + tableau de lignes (produit,
     quantité, prix éventuel) + application atomique via apply_stock_batch.
 
@@ -63,6 +63,7 @@ class _BaseStockBatchDialog(QDialog):
     is_sale: bool = False
     sale_price_type: str | None = None
     show_price_column: bool = False
+    _dialog_title: str = "Mouvement de stock"
 
     def __init__(self, display_id: int | None = None) -> None:
         super().__init__()
@@ -81,7 +82,21 @@ class _BaseStockBatchDialog(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self._layout = layout
+
+        layout.addWidget(self._make_header(self._dialog_title))
+
+        inner = QWidget()
+        inner.setStyleSheet("background: white;")
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(20, 16, 20, 16)
+        inner_layout.setSpacing(10)
+        layout.addWidget(inner, stretch=1)
+        # Redirect self._layout to inner so subclass code appends into body
+        self._layout = inner_layout
+        layout = inner_layout
 
         self._header_form = QFormLayout()
         self._header_form.setSpacing(10)
@@ -320,10 +335,10 @@ class SupplierPurchaseDialog(_BaseStockBatchDialog):
     is_sale = False
     sale_price_type = None
     show_price_column = True
+    _dialog_title = "Achat fournisseur"
 
     def __init__(self, display_id: int | None = None) -> None:
         super().__init__(display_id)
-        self.setWindowTitle("Achat fournisseur")
 
     def _default_price_cents(self, display) -> int:
         return display.purchase_price_cents
@@ -347,10 +362,10 @@ class WholesaleSaleDialog(_BaseStockBatchDialog):
     is_sale = True
     sale_price_type = "wholesale"
     show_price_column = True
+    _dialog_title = "Vente en gros (revendeur)"
 
     def __init__(self, display_id: int | None = None) -> None:
         super().__init__(display_id)
-        self.setWindowTitle("Vente en gros (revendeur)")
 
     def _build_header(self, form: QFormLayout) -> None:
         self.reseller_input = QComboBox()
@@ -371,11 +386,11 @@ class StockAdjustmentDialog(_BaseStockBatchDialog):
     is_sale = False
     sale_price_type = None
     show_price_column = False
+    _dialog_title = "Ajustement de stock"
 
     def __init__(self, display_id: int | None = None) -> None:
         self.direction = 1
         super().__init__(display_id)
-        self.setWindowTitle("Ajustement de stock")
 
     def _build_header(self, form: QFormLayout) -> None:
         self.direction_input = QComboBox()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
@@ -24,12 +23,13 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, create_repair, get_repair, list_displays, update_repair
+from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
 
 PARTS_COLUMNS = ["Pièce", "Quantité", "Prix détail", ""]
 
 
-class RepairDialog(QDialog):
+class RepairDialog(FramelessDialog):
     """Formulaire d'ajout ou de modification d'une réparation.
 
     En mode modification, sauvegarder remplace entièrement les pièces
@@ -41,10 +41,7 @@ class RepairDialog(QDialog):
     def __init__(self, repair_id: int | None = None) -> None:
         super().__init__()
         self.repair_id = repair_id
-        self.setWindowTitle(
-            "Modifier la réparation" if repair_id else "Nouvelle réparation"
-        )
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(540)
         self.setModal(True)
         self._part_rows: list[tuple[int, int, ModernSpinBox]] = []
         self._build_ui()
@@ -52,7 +49,23 @@ class RepairDialog(QDialog):
             self._load_repair(repair_id)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        title = "Modifier la réparation" if self.repair_id else "Nouvelle réparation"
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(
+            title,
+            gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #00897b)",
+        ))
+
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        body_v = QVBoxLayout(body)
+        body_v.setContentsMargins(20, 16, 20, 16)
+        body_v.setSpacing(10)
+        root.addWidget(body)
+        layout = body_v
+
         form = QFormLayout()
         form.setSpacing(10)
         layout.addLayout(form)

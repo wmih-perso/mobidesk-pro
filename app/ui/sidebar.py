@@ -1,22 +1,19 @@
-"""Menu latéral de navigation."""
+"""Barre de navigation supérieure horizontale."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
-
-from app.ui.icons import nav_icon
 
 APP_ICON_PATH = Path(__file__).resolve().parent / "resources" / "app_icon.png"
 
@@ -30,187 +27,202 @@ def _load_icon_pixmap(size: int) -> QPixmap | None:
     )
 
 
+def _make_logo_badge(size: int = 36) -> QPixmap:
+    """Logo rond teal avec les initiales 'M' en blanc."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#009688"))
+    painter.drawEllipse(0, 0, size, size)
+    painter.setPen(QColor("#ffffff"))
+    from PySide6.QtGui import QFont
+    font = QFont("Segoe UI", int(size * 0.42), QFont.Weight.Bold)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "M")
+    painter.end()
+    return pixmap
+
+
 class Sidebar(QWidget):
+    """Barre de navigation horizontale."""
+
     page_selected = Signal(str)
     new_sale_requested = Signal()
+    add_product_requested = Signal()
+    refresh_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("Sidebar")
-        self.setFixedWidth(240)
+        self.setObjectName("TopNav")
+        self.setFixedHeight(56)
         self._buttons: dict[str, QPushButton] = {}
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._stock_badge_label: QLabel | None = None
+        self._drag_pos: QPoint | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(0)
 
-        # --- Marque ---
-        brand_frame = QFrame()
-        brand_frame.setObjectName("SidebarBrand")
-        brand_layout = QHBoxLayout(brand_frame)
-        brand_layout.setContentsMargins(20, 18, 20, 16)
-        brand_layout.setSpacing(10)
+        # Badge logo rond + Nom
+        logo_label = QLabel()
+        logo_label.setPixmap(_make_logo_badge(34))
+        logo_label.setFixedSize(34, 34)
+        layout.addWidget(logo_label)
 
-        icon_pixmap = _load_icon_pixmap(28)
-        if icon_pixmap is not None:
-            icon_label = QLabel()
-            icon_label.setPixmap(icon_pixmap)
-            brand_layout.addWidget(icon_label)
+        layout.addSpacing(10)
 
-        brand_texts = QVBoxLayout()
-        brand_texts.setSpacing(0)
-        brand_name = QLabel("MobiDesk Pro")
-        brand_name.setObjectName("SidebarBrandText")
-        brand_texts.addWidget(brand_name)
-        brand_sub = QLabel("Gestion de stock")
-        brand_sub.setObjectName("SidebarUserRole")
-        brand_texts.addWidget(brand_sub)
-        brand_layout.addLayout(brand_texts)
-        brand_layout.addStretch()
-        layout.addWidget(brand_frame)
+        brand = QLabel("MobiDesk Pro")
+        brand.setObjectName("NavBrand")
+        layout.addWidget(brand)
 
-        # --- Navigation principale (plate, sans libellés de section) ---
-        nav_container = QWidget()
-        nav_container.setObjectName("SidebarNav")
-        nav_layout = QVBoxLayout(nav_container)
-        nav_layout.setContentsMargins(12, 16, 12, 12)
-        nav_layout.setSpacing(2)
+        layout.addSpacing(20)
 
-        self._add_nav_page(nav_layout, "dashboard", "home", "Tableau de bord")
-
-        # Item Stock avec badge
-        stock_row = QWidget()
-        stock_row.setObjectName("SidebarNav")
-        stock_row_layout = QHBoxLayout(stock_row)
-        stock_row_layout.setContentsMargins(0, 0, 4, 0)
-        stock_row_layout.setSpacing(0)
-
-        stock_btn = QPushButton("Stock")
-        stock_btn.setObjectName("SidebarButton")
-        stock_btn.setIcon(nav_icon("monitor"))
-        stock_btn.setIconSize(QSize(17, 17))
-        stock_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        stock_btn.setCheckable(True)
-        stock_btn.clicked.connect(lambda: self.page_selected.emit("stock"))
-        self._buttons["stock"] = stock_btn
-        self._button_group.addButton(stock_btn)
-        stock_row_layout.addWidget(stock_btn, stretch=1)
-
-        self._stock_badge_label = QLabel("")
-        self._stock_badge_label.setObjectName("SidebarBadge")
-        self._stock_badge_label.setVisible(False)
-        self._stock_badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._stock_badge_label.setFixedSize(22, 22)
-        stock_row_layout.addWidget(self._stock_badge_label, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-        nav_layout.addWidget(stock_row)
-
-        self._add_nav_page(nav_layout, "historique", "list", "Historique")
-        self._add_nav_page(nav_layout, "profit", "coin", "Bénéfices")
-
-        nav_layout.addSpacing(6)
-        sep2 = QFrame()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: #1e293b;")
-        nav_layout.addWidget(sep2)
-        nav_layout.addSpacing(6)
-
-        self._add_nav_page(nav_layout, "resellers", "users", "Revendeurs")
-        self._add_nav_page(nav_layout, "suppliers", "download", "Fournisseurs")
-        self._add_nav_page(nav_layout, "categories", "tag", "Catégories")
-        self._add_nav_page(nav_layout, "settings", "gear", "Paramètres")
-
-        nav_layout.addSpacing(8)
-
+        # Séparateur vertical
         sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: #f1f5f9;")
-        nav_layout.addWidget(sep)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("background-color: #e0e0e0; border: none;")
+        sep.setFixedSize(1, 30)
+        layout.addWidget(sep)
 
-        nav_layout.addSpacing(8)
+        layout.addSpacing(4)
 
-        # Actions secondaires (style plus discret)
-        self._add_nav_action(nav_layout, "purchase", "download", "Achat fournisseur")
-        self._add_nav_action(nav_layout, "stock_adjust", "list", "Ajustement de stock")
+        # Boutons d'action rapide — visibles sur toutes les pages
+        sale_btn = QPushButton("🛒  Nouvelle vente")
+        sale_btn.setObjectName("NavSaleButton")
+        sale_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sale_btn.clicked.connect(self.new_sale_requested.emit)
+        layout.addWidget(sale_btn)
 
-        nav_layout.addSpacing(8)
-        nav_layout.addStretch()
+        layout.addSpacing(4)
 
-        layout.addWidget(nav_container, stretch=1)
+        add_btn = QPushButton("+  Produit")
+        add_btn.setObjectName("NavSaleButton")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(
+            "QPushButton#NavSaleButton { background-color: #0288d1; }"
+            "QPushButton#NavSaleButton:hover { background-color: #0277bd; }"
+            "QPushButton#NavSaleButton:pressed { background-color: #01579b; }"
+        )
+        add_btn.clicked.connect(self.add_product_requested.emit)
+        layout.addWidget(add_btn)
 
-        # --- Pied de page ---
-        layout.addWidget(self._build_user_footer())
+        layout.addSpacing(8)
 
-    def _add_nav_page(self, layout: QVBoxLayout, page_key: str, icon: str, label: str) -> None:
-        button = QPushButton(label)
-        button.setObjectName("SidebarButton")
-        button.setIcon(nav_icon(icon))
-        button.setIconSize(QSize(17, 17))
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setCheckable(True)
-        button.clicked.connect(lambda _c, key=page_key: self.page_selected.emit(key))
-        self._buttons[page_key] = button
-        self._button_group.addButton(button)
-        layout.addWidget(button)
+        # Séparateur vertical
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setStyleSheet("background-color: #e0e0e0; border: none;")
+        sep2.setFixedSize(1, 30)
+        layout.addWidget(sep2)
 
-    def _add_nav_action(self, layout: QVBoxLayout, page_key: str, icon: str, label: str) -> None:
-        button = QPushButton(label)
-        button.setObjectName("SidebarActionButton")
-        button.setIcon(nav_icon(icon))
-        button.setIconSize(QSize(15, 15))
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setCheckable(False)
-        button.clicked.connect(lambda _c, key=page_key: self.page_selected.emit(key))
-        self._buttons[page_key] = button
-        layout.addWidget(button)
+        layout.addSpacing(4)
 
-    def _build_user_footer(self) -> QWidget:
-        footer = QFrame()
-        footer.setObjectName("SidebarFooter")
-        layout = QHBoxLayout(footer)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
+        # Boutons de navigation
+        self._add_nav(layout, "stock", "Stock")
+        self._add_nav(layout, "ventes", "Ventes")
+        self._add_nav(layout, "historique", "Historique")
+        self._add_nav(layout, "profit", "Bénéfices")
+        self._add_nav(layout, "resellers", "Clients")
+        self._add_nav(layout, "suppliers", "Fournisseurs")
+        self._add_nav(layout, "categories", "Catégories")
+        self._add_nav(layout, "settings", "Paramètres")
 
-        avatar = QLabel()
-        avatar.setObjectName("SidebarAvatar")
-        avatar.setFixedSize(32, 32)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar_pixmap = _load_icon_pixmap(32)
-        if avatar_pixmap is not None:
-            avatar.setPixmap(avatar_pixmap)
-        layout.addWidget(avatar)
+        # Bouton "Comptes" — visible seulement pour l'admin (mis à jour après login)
+        self._accounts_btn = QPushButton("👥  Comptes")
+        self._accounts_btn.setObjectName("NavButton")
+        self._accounts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._accounts_btn.setCheckable(True)
+        self._accounts_btn.clicked.connect(lambda _c: self.page_selected.emit("accounts"))
+        self._accounts_btn.setVisible(False)
+        self._button_group.addButton(self._accounts_btn)
+        self._buttons["accounts"] = self._accounts_btn
+        layout.addWidget(self._accounts_btn)
 
-        texts = QVBoxLayout()
-        texts.setSpacing(0)
-        name_label = QLabel("MobiDesk Pro")
-        name_label.setObjectName("SidebarUserName")
-        texts.addWidget(name_label)
-        role_label = QLabel("Administrateur")
-        role_label.setObjectName("SidebarUserRole")
-        texts.addWidget(role_label)
-        layout.addLayout(texts, stretch=1)
+        layout.addSpacing(8)
 
-        return footer
+        refresh_btn = QPushButton("🔄")
+        refresh_btn.setToolTip("Actualiser toutes les données")
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setFixedSize(36, 36)
+        refresh_btn.setStyleSheet(
+            "QPushButton { border: 1px solid #d1d5db; border-radius: 8px;"
+            " background: #f3f4f6; color: #374151; font-size: 17px; padding: 0; }"
+            "QPushButton:hover { background: #e0f2f1; border-color: #009688; }"
+            "QPushButton:pressed { background: #b2dfdb; }"
+        )
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
+        layout.addWidget(refresh_btn)
+
+        layout.addSpacing(8)
+
+        layout.addStretch()
+
+        # Boutons de contrôle de la fenêtre (remplace la barre de titre Windows)
+        min_btn = QPushButton("—")
+        min_btn.setObjectName("WinMinBtn")
+        min_btn.setFixedSize(30, 26)
+        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        min_btn.setToolTip("Réduire")
+        min_btn.clicked.connect(lambda: self.window().showMinimized())
+        layout.addWidget(min_btn)
+
+        layout.addSpacing(4)
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("WinCloseBtn")
+        close_btn.setFixedSize(30, 26)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setToolTip("Fermer l'application")
+        close_btn.clicked.connect(lambda: self.window().close())
+        layout.addWidget(close_btn)
+
+    def _add_nav(self, layout: QHBoxLayout, page_key: str, label: str) -> None:
+        btn = QPushButton(label)
+        btn.setObjectName("NavButton")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setCheckable(True)
+        btn.clicked.connect(lambda _c, key=page_key: self.page_selected.emit(key))
+        self._buttons[page_key] = btn
+        self._button_group.addButton(btn)
+        layout.addWidget(btn)
 
     def select_page(self, page_key: str) -> None:
-        button = self._buttons.get(page_key)
-        if button is not None and button.isCheckable():
-            button.setChecked(True)
+        btn = self._buttons.get(page_key)
+        if btn is not None and btn.isCheckable():
+            btn.setChecked(True)
+
+    def set_current_user(self, display_name: str, role: str) -> None:
+        """Montre/cache le bouton Comptes selon le rôle."""
+        self._accounts_btn.setVisible(role == "admin")
 
     def set_low_stock_badge(self, count: int) -> None:
-        if self._stock_badge_label is None:
-            return
-        if count > 0:
-            self._stock_badge_label.setText(str(count))
-            self._stock_badge_label.setVisible(True)
-        else:
-            self._stock_badge_label.setVisible(False)
+        """Met à jour le badge de stock faible — visible dans la barre de statut."""
+        pass
 
-    # Kept for backward compat — no longer shown in UI
+    # ------------------------------------------------------------------
+    # Drag-to-move (fenêtre principale sans titre Windows)
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    # Backward compat
     def set_stock_value(self, _formatted_value: str) -> None:
         pass

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
     QSizePolicy,
 )
 
@@ -32,10 +32,11 @@ from app.services import (
     cancel_movement_batch,
     list_displays,
 )
+from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
 
 
-class MovementEditDialog(QDialog):
+class MovementEditDialog(FramelessDialog):
     """Édition d'un lot de mouvements identifié par movement_batch_id."""
 
     def __init__(self, batch_id: int | None = None, movement_id: int | None = None, parent=None) -> None:
@@ -125,11 +126,20 @@ class MovementEditDialog(QDialog):
             title = "Modifier la vente"
         else:
             title = "Modifier l'ajustement de stock"
-        self.setWindowTitle(title)
-        self.setMinimumWidth(580)
+        self.setMinimumWidth(600)
         self.setModal(True)
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(title))
+
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+        root.addWidget(body)
 
         lot_ref = f"Lot #{self._batch_id}" if self._batch_id is not None else f"Mouvement #{self._movement_id}"
         info = QLabel(f"{lot_ref}  —  Motif : {self._reason}")

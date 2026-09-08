@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt  # noqa: F401 — utilisé dans _render_html
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QPushButton,
     QScrollArea,
@@ -15,9 +14,10 @@ from PySide6.QtWidgets import (
 )
 
 from app.printing import STORE_NAME, STORE_PHONE, STORE_TAGLINE, _collect_ticket_data, _da
+from app.ui.frameless_dialog import FramelessDialog
 
 
-class TicketPreviewDialog(QDialog):
+class TicketPreviewDialog(FramelessDialog):
     """Affiche un aperçu du ticket et propose de l'imprimer."""
 
     def __init__(
@@ -27,14 +27,7 @@ class TicketPreviewDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Ticket de caisse")
-        self.setMinimumWidth(340)
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.WindowTitleHint
-            | Qt.WindowType.WindowCloseButtonHint
-            | Qt.WindowType.CustomizeWindowHint
-        )
+        self.setMinimumWidth(360)
         self._batch_id = batch_id
         self._movement_id = movement_id
         self._data: dict | None = None
@@ -46,9 +39,21 @@ class TicketPreviewDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 16)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header(
+            "🖨  Ticket de caisse",
+            gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #374151,stop:1 #1e3a5f)",
+            height=54,
+        ))
+
+        inner = QWidget()
+        inner.setStyleSheet("background: white;")
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(14)
+        root.addWidget(inner)
 
         # Zone de prévisualisation
         scroll = QScrollArea()
@@ -146,6 +151,9 @@ class TicketPreviewDialog(QDialog):
 
   <p style="margin:2px 0;">Ticket : <b>{d['ticket_num']:06d}</b></p>
   <p style="margin:2px 0;">{d['date_str']}</p>
+  {"<p style='margin:2px 0;color:#5a5650;'>Caissier : " + d['cashier_name'] + "</p>" if d.get('cashier_name') else ""}
+  {"<p style='margin:4px 0;font-weight:bold;'>Client : " + d['reseller_name'] + "</p>" if d.get('reseller_name') else ""}
+  {"<p style='margin:2px 0;'>Tél : " + d['reseller_phone'] + "</p>" if d.get('reseller_name') and d.get('reseller_phone') else ""}
 
   <hr style="border:none;border-top:1px dashed #c9c5bf;margin:6px 0;">
 
