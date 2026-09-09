@@ -20,7 +20,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -171,15 +170,24 @@ class _BaseStockBatchDialog(FramelessDialog):
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+        cancel_btn = QPushButton("✕  Annuler")
+        cancel_btn.setObjectName("SecondaryButton")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        save_btn = QPushButton("✔  Valider")
+        save_btn.setFixedHeight(40)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px;"
+            " padding: 10px 18px; font-weight: 700; font-size: 13px; }"
+            " QPushButton:hover { background: #00796b; }"
         )
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("Valider")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("SecondaryButton")
-        buttons.accepted.connect(self._on_save)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
 
     def _build_header(self, form: QFormLayout) -> None:
         """Sous-classes : ajouter ici les champs d'en-tête (fournisseur,

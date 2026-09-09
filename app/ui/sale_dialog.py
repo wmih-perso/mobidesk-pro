@@ -69,6 +69,7 @@ class SaleDialog(FramelessDialog):
                     d.category or "",
                     d.sale_price_retail_cents,
                     d.sale_price_wholesale_cents,
+                    d.quantity,
                 )
                 for d in list_displays(session)
             ]
@@ -176,6 +177,7 @@ class SaleDialog(FramelessDialog):
             "border-radius: 4px; padding: 4px 8px; font-size: 12px; min-width: 160px; }"
             "QComboBox::drop-down { border: none; width: 20px; }"
         )
+        self.reseller_combo.currentIndexChanged.connect(self._on_reseller_changed)
         self.reseller_col.addWidget(self.reseller_combo)
         self.reseller_widget = QWidget()
         self.reseller_widget.setLayout(self.reseller_col)
@@ -263,10 +265,10 @@ class SaleDialog(FramelessDialog):
         self.search_results.itemClicked.connect(self._on_result_clicked)
         body_layout.addWidget(self.search_results)
 
-        # Tableau panier
-        self.lines_table = QTableWidget(0, 6)
+        # Tableau panier — 7 colonnes dont Stock
+        self.lines_table = QTableWidget(0, 7)
         self.lines_table.setHorizontalHeaderLabels(
-            ["Référence", "Désignation", "Prix U.", "Qté", "Montant", ""]
+            ["Référence", "Désignation", "Stock", "Prix U.", "Qté", "Montant", ""]
         )
         self.lines_table.setStyleSheet(
             "QTableWidget { background: white; border: 1px solid #e0e0e0; border-radius: 8px; "
@@ -285,11 +287,13 @@ class SaleDialog(FramelessDialog):
         tbl_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         tbl_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         tbl_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        tbl_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self.lines_table.setColumnWidth(0, 110)
-        self.lines_table.setColumnWidth(2, 160)
-        self.lines_table.setColumnWidth(3, 130)
-        self.lines_table.setColumnWidth(4, 140)
-        self.lines_table.setColumnWidth(5, 46)
+        self.lines_table.setColumnWidth(2, 60)   # Stock
+        self.lines_table.setColumnWidth(3, 150)  # Prix U.
+        self.lines_table.setColumnWidth(4, 120)  # Qté
+        self.lines_table.setColumnWidth(5, 130)  # Montant
+        self.lines_table.setColumnWidth(6, 46)   # ×
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.verticalHeader().setDefaultSectionSize(48)
         self.lines_table.setMinimumHeight(120)
@@ -311,34 +315,75 @@ class SaleDialog(FramelessDialog):
 
         root.addWidget(body, stretch=1)
 
-        # ── BARRE DE BOUTONS BAS ───────────────────────────────────────
+        # ── BARRE DE PIED ──────────────────────────────────────────────
         footer = QFrame()
         footer.setStyleSheet(
             "QFrame { background: #1a1a2e; border-top: 2px solid #00897b; }"
         )
-        footer_layout = QHBoxLayout(footer)
+        footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(16, 10, 16, 10)
-        footer_layout.setSpacing(8)
+        footer_layout.setSpacing(6)
 
-        # Bouton Annuler (Echap)
+        # ── Ligne versement (toujours dans le layout, visible/caché selon mode) ──
+        vers_row = QHBoxLayout()
+        vers_row.setSpacing(16)
+
+        vers_lbl = QLabel("💰  Versement :")
+        vers_lbl.setStyleSheet("color: #94a3b8; font-size: 13px;")
+        vers_row.addWidget(vers_lbl)
+
+        self.versement_spin = ModernDoubleSpinBox()
+        self.versement_spin.setRange(0, 999_999_999)
+        self.versement_spin.setDecimals(0)
+        self.versement_spin.setSuffix(" DA")
+        self.versement_spin.setFixedWidth(180)
+        self.versement_spin.setStyleSheet(
+            "QDoubleSpinBox { background: #1e293b; color: #00e676; "
+            "border: 2px solid #00897b; border-radius: 6px; "
+            "padding: 5px 10px; font-size: 14px; font-weight: 700; }"
+            "QDoubleSpinBox:focus { border: 2px solid #00e676; }"
+        )
+        self.versement_spin.valueChanged.connect(self._update_reste)
+        vers_row.addWidget(self.versement_spin)
+
+        vers_sep = QLabel("|")
+        vers_sep.setStyleSheet("color: #334155; font-size: 16px;")
+        vers_row.addWidget(vers_sep)
+
+        reste_lbl_title = QLabel("Reste dû :")
+        reste_lbl_title.setStyleSheet("color: #94a3b8; font-size: 13px;")
+        vers_row.addWidget(reste_lbl_title)
+
+        self._reste_label = QLabel("0 DA  ✓")
+        self._reste_label.setStyleSheet("color: #00e676; font-size: 15px; font-weight: 700;")
+        vers_row.addWidget(self._reste_label)
+
+        vers_row.addStretch()
+
+        # Widgets de la ligne versement — initialement cachés
+        self._vers_widgets = [vers_lbl, self.versement_spin, vers_sep,
+                              reste_lbl_title, self._reste_label]
+        for w in self._vers_widgets:
+            w.setVisible(False)
+
+        footer_layout.addLayout(vers_row)
+
+        # ── Ligne boutons ──────────────────────────────────────────────
+        btn_hl = QHBoxLayout()
+        btn_hl.setSpacing(8)
         cancel_btn = self._action_btn("✕  Fermer (Echap)", "#ef4444", "#dc2626")
         cancel_btn.clicked.connect(self.reject)
-        footer_layout.addWidget(cancel_btn)
-
-        footer_layout.addStretch()
-
-        # Nombre d'articles
+        btn_hl.addWidget(cancel_btn)
+        btn_hl.addStretch()
         self.count_label = QLabel("Nombre de produits : 0")
         self.count_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
-        footer_layout.addWidget(self.count_label)
-
-        footer_layout.addSpacing(16)
-
-        # Bouton Confirmer
+        btn_hl.addWidget(self.count_label)
+        btn_hl.addSpacing(16)
         self.confirm_btn = self._action_btn("✔  Valider la vente", "#00897b", "#00695c")
         self.confirm_btn.setMinimumWidth(180)
         self.confirm_btn.clicked.connect(self._on_save)
-        footer_layout.addWidget(self.confirm_btn)
+        btn_hl.addWidget(self.confirm_btn)
+        footer_layout.addLayout(btn_hl)
 
         root.addWidget(footer)
 
@@ -380,18 +425,58 @@ class SaleDialog(FramelessDialog):
         self._style_toggle(self.retail_button, not is_wholesale)
         self._style_toggle(self.wholesale_button, is_wholesale)
         self.reseller_widget.setVisible(is_wholesale)
+        for w in self._vers_widgets:
+            w.setVisible(is_wholesale)
         for _d_id, retail_cents, wholesale_cents, qty_spin, price_spin in self._line_rows:
             price_spin.setValue(cents_to_da(wholesale_cents if is_wholesale else retail_cents))
         self._update_total()
+        if is_wholesale:
+            self._sync_versement_to_total()
+
+    def _on_reseller_changed(self) -> None:
+        if self._sale_type() == "wholesale":
+            self._sync_versement_to_total()
+
+    def _sync_versement_to_total(self) -> None:
+        subtotal = sum(
+            da_to_cents(price.value()) * qty.value()
+            for _d_id, _ret, _who, qty, price in self._line_rows
+        )
+        remise = min(da_to_cents(self.remise_spin.value()), subtotal)
+        net = max(0, subtotal - remise)
+        self.versement_spin.blockSignals(True)
+        self.versement_spin.setValue(cents_to_da(net))
+        self.versement_spin.blockSignals(False)
+        self._update_reste()
+
+    def _update_reste(self) -> None:
+        subtotal = sum(
+            da_to_cents(price.value()) * qty.value()
+            for _d_id, _ret, _who, qty, price in self._line_rows
+        )
+        remise = min(da_to_cents(self.remise_spin.value()), subtotal)
+        net = max(0, subtotal - remise)
+        vers = da_to_cents(self.versement_spin.value())
+        reste = max(0, net - vers)
+        if reste == 0:
+            self._reste_label.setText("0 DA  ✓")
+            self._reste_label.setStyleSheet(
+                "color: #00e676; font-size: 15px; font-weight: 700;"
+            )
+        else:
+            self._reste_label.setText(f"{format_da(reste)} DA  ⚠")
+            self._reste_label.setStyleSheet(
+                "color: #f87171; font-size: 15px; font-weight: 700;"
+            )
 
     # ------------------------------------------------------------------
     # Recherche et lignes
     # ------------------------------------------------------------------
 
     def _preload_display(self, display_id: int) -> None:
-        for d_id, ref, label, cat, retail, wholesale in self._display_choices:
+        for d_id, ref, label, cat, retail, wholesale, qty_stock in self._display_choices:
             if d_id == display_id:
-                self._add_line_row(d_id, ref, label, retail, wholesale, cat)
+                self._add_line_row(d_id, ref, label, retail, wholesale, cat, qty_stock)
                 break
 
     def _on_search_changed(self, text: str) -> None:
@@ -402,15 +487,15 @@ class SaleDialog(FramelessDialog):
             return
         already = {d_id for d_id, *_ in self._line_rows}
         matches = [
-            (d_id, ref, label, cat, ret, who)
-            for d_id, ref, label, cat, ret, who in self._display_choices
+            (d_id, ref, label, cat, ret, who, qs)
+            for d_id, ref, label, cat, ret, who, qs in self._display_choices
             if (text in ref.lower() or text in label.lower() or text in cat.lower())
             and d_id not in already
         ]
         if not matches:
             self.search_results.setVisible(False)
             return
-        for d_id, ref, label, cat, ret, who in matches:
+        for d_id, ref, label, cat, ret, who, qs in matches:
             parts = []
             if cat:
                 parts.append(cat)
@@ -419,7 +504,7 @@ class SaleDialog(FramelessDialog):
             parts.append(ref)
             display_text = "  ·  ".join(parts)
             item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, (d_id, ref, label, cat, ret, who))
+            item.setData(Qt.ItemDataRole.UserRole, (d_id, ref, label, cat, ret, who, qs))
             self.search_results.addItem(item)
         self.search_results.setVisible(True)
 
@@ -431,8 +516,8 @@ class SaleDialog(FramelessDialog):
             self._on_result_clicked(self.search_results.item(0))
 
     def _on_result_clicked(self, item: QListWidgetItem) -> None:
-        d_id, ref, label, cat, ret, who = item.data(Qt.ItemDataRole.UserRole)
-        self._add_line_row(d_id, ref, label, ret, who, cat)
+        d_id, ref, label, cat, ret, who, qs = item.data(Qt.ItemDataRole.UserRole)
+        self._add_line_row(d_id, ref, label, ret, who, cat, qs)
         self.search_input.clear()
         self.search_results.clear()
         self.search_results.setVisible(False)
@@ -445,28 +530,42 @@ class SaleDialog(FramelessDialog):
         retail_cents: int,
         wholesale_cents: int,
         category: str = "",
+        qty_stock: int = 0,
     ) -> None:
+        from PySide6.QtGui import QColor
         is_wholesale = self._sale_type() == "wholesale"
         base_price = wholesale_cents if is_wholesale else retail_cents
         row = self.lines_table.rowCount()
         self.lines_table.insertRow(row)
 
-        # Référence
+        # Col 0 — Référence
         ref_item = QTableWidgetItem(ref)
         ref_item.setFlags(ref_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         ref_item.setForeground(Qt.GlobalColor.darkGray)
         ref_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.lines_table.setItem(row, 0, ref_item)
 
-        # Désignation
-        desc = label or ref
-        if category:
-            desc = f"{label or ref}  ·  {category}"
+        # Col 1 — Désignation
+        desc = f"{label or ref}  ·  {category}" if category else (label or ref)
         desc_item = QTableWidgetItem(desc)
         desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.lines_table.setItem(row, 1, desc_item)
 
-        # Prix unitaire (éditable via spinbox)
+        # Col 2 — Stock
+        stock_item = QTableWidgetItem(str(qty_stock))
+        stock_item.setFlags(stock_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if qty_stock <= 1:
+            stock_item.setForeground(QColor("#dc2626"))
+            stock_item.setBackground(QColor("#fef2f2"))
+        elif qty_stock <= 3:
+            stock_item.setForeground(QColor("#d97706"))
+            stock_item.setBackground(QColor("#fffbeb"))
+        else:
+            stock_item.setForeground(QColor("#16a34a"))
+        self.lines_table.setItem(row, 2, stock_item)
+
+        # Col 3 — Prix unitaire
         price_spin = ModernDoubleSpinBox()
         price_spin.setRange(0, 99_999_999)
         price_spin.setDecimals(0)
@@ -475,24 +574,24 @@ class SaleDialog(FramelessDialog):
         price_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         price_spin.setValue(cents_to_da(base_price))
         price_spin.valueChanged.connect(self._update_total)
-        self.lines_table.setCellWidget(row, 2, _spin_cell(price_spin))
+        self.lines_table.setCellWidget(row, 3, _spin_cell(price_spin))
 
-        # Quantité
+        # Col 4 — Quantité
         qty_spin = ModernSpinBox()
         qty_spin.setRange(1, 1_000_000)
         qty_spin.setFixedHeight(34)
         qty_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         qty_spin.valueChanged.connect(self._update_total)
-        self.lines_table.setCellWidget(row, 3, _spin_cell(qty_spin))
+        self.lines_table.setCellWidget(row, 4, _spin_cell(qty_spin))
 
-        # Montant
+        # Col 5 — Montant
         total_item = QTableWidgetItem(format_da(base_price))
         total_item.setFlags(total_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         total_item.setForeground(Qt.GlobalColor.darkGray)
-        self.lines_table.setItem(row, 4, total_item)
+        self.lines_table.setItem(row, 5, total_item)
 
-        # Supprimer
+        # Col 6 — Supprimer
         remove_btn = QPushButton("×")
         remove_btn.setFixedSize(28, 28)
         remove_btn.setStyleSheet(
@@ -502,7 +601,7 @@ class SaleDialog(FramelessDialog):
         )
         remove_btn.setToolTip("Supprimer")
         remove_btn.clicked.connect(lambda: self._remove_line_row(qty_spin))
-        self.lines_table.setCellWidget(row, 5, _centered(remove_btn))
+        self.lines_table.setCellWidget(row, 6, _centered(remove_btn))
 
         self._line_rows.append((display_id, retail_cents, wholesale_cents, qty_spin, price_spin))
         self._update_total()
@@ -520,16 +619,18 @@ class SaleDialog(FramelessDialog):
         for i, (_d_id, _ret, _who, qty_spin, price_spin) in enumerate(self._line_rows):
             line_total = da_to_cents(price_spin.value()) * qty_spin.value()
             subtotal += line_total
-            item = self.lines_table.item(i, 4)
+            item = self.lines_table.item(i, 5)
             if item:
                 item.setText(format_da(line_total))
         remise = min(da_to_cents(self.remise_spin.value()), subtotal)
         net = max(0, subtotal - remise)
-        # Affichage grand total (chiffre seulement, sans "DA")
         da_val = cents_to_da(net)
         self.total_label.setText(f"{da_val:,.2f}".replace(",", " ").replace(".", ","))
         self.confirm_btn.setText(f"✔  Valider — {format_da(net)}")
         self.count_label.setText(f"Nombre de produits : {self.lines_table.rowCount()}")
+
+        if self._sale_type() == "wholesale":
+            self._sync_versement_to_total()
 
     # ------------------------------------------------------------------
     # Sauvegarde
@@ -557,6 +658,10 @@ class SaleDialog(FramelessDialog):
                 unit_price = round(unit_price * (1 - discount_ratio))
             lines.append((display_id, qty_spin.value(), unit_price))
 
+        versement_cents = None
+        if reseller_id is not None and sale_type == "wholesale":
+            versement_cents = int(da_to_cents(self.versement_spin.value()))
+
         batch_id = None
         try:
             with session_scope() as session:
@@ -568,6 +673,8 @@ class SaleDialog(FramelessDialog):
                     is_sale=True,
                     sale_price_type=sale_type,
                     reseller_id=reseller_id,
+                    versement_cents=versement_cents,
+                    remise_cents=remise_cents,
                 )
         except StockError as error:
             self.error_label.setText(str(error))

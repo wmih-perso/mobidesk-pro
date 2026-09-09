@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -18,12 +19,44 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QStyleOptionComboBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+
+
+class _ModernCombo(QComboBox):
+    """QComboBox avec flèche ▾ dessinée en teal."""
+
+    def paintEvent(self, event):
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Fond + bordure
+        rect = self.rect()
+        painter.setPen(QColor("#bdbdbd"))
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(rect.adjusted(0, 0, -1, -1), 6, 6)
+
+        # Texte centré-gauche
+        text_rect = rect.adjusted(11, 0, -28, 0)
+        painter.setPen(QColor("#212121"))
+        font = QFont("Segoe UI", 13)
+        painter.setFont(font)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         self.currentText())
+
+        # Flèche ▾
+        painter.setPen(QColor("#00897b"))
+        arrow_font = QFont("Segoe UI", 11)
+        painter.setFont(arrow_font)
+        arrow_rect = rect.adjusted(rect.width() - 26, 0, 0, 0)
+        painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "▾")
 
 from app.database import session_scope
 from app.money import format_da
@@ -539,13 +572,13 @@ class _FilterBar(QWidget):
         self.search.setMinimumWidth(220)
         layout.addWidget(self.search)
 
-        self.type_combo = QComboBox()
+        self.type_combo = _ModernCombo()
         for label, key in type_options:
             self.type_combo.addItem(label, key)
-        self.type_combo.setFixedWidth(160)
+        self.type_combo.setFixedWidth(175)
         layout.addWidget(self.type_combo)
 
-        self.date_combo = QComboBox()
+        self.date_combo = _ModernCombo()
         for label, key in [
             ("Toutes les dates", "all"),
             ("Aujourd'hui", "today"),
@@ -553,7 +586,7 @@ class _FilterBar(QWidget):
             ("Ce mois", "month"),
         ]:
             self.date_combo.addItem(label, key)
-        self.date_combo.setFixedWidth(150)
+        self.date_combo.setFixedWidth(165)
         layout.addWidget(self.date_combo)
 
         layout.addStretch()
@@ -822,7 +855,7 @@ class _MovementsTab(QWidget):
         pag_layout.addWidget(self._summary_lbl)
         pag_layout.addStretch()
 
-        self._prev_btn = QPushButton("‹")
+        self._prev_btn = QPushButton("⟨")
         self._prev_btn.setObjectName("PageNavButton")
         self._prev_btn.clicked.connect(lambda: self._go_page(self._current_page - 1))
         pag_layout.addWidget(self._prev_btn)
@@ -833,7 +866,7 @@ class _MovementsTab(QWidget):
         self._page_lbl.setFixedWidth(32)
         pag_layout.addWidget(self._page_lbl)
 
-        self._next_btn = QPushButton("›")
+        self._next_btn = QPushButton("⟩")
         self._next_btn.setObjectName("PageNavButton")
         self._next_btn.clicked.connect(lambda: self._go_page(self._current_page + 1))
         pag_layout.addWidget(self._next_btn)

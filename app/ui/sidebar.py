@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -57,11 +57,11 @@ class Sidebar(QWidget):
         super().__init__()
         self.setObjectName("TopNav")
         self.setFixedHeight(56)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._buttons: dict[str, QPushButton] = {}
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
         self._stock_badge_label: QLabel | None = None
-        self._drag_pos: QPoint | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -86,40 +86,9 @@ class Sidebar(QWidget):
         # Séparateur vertical
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("background-color: #e0e0e0; border: none;")
+        sep.setStyleSheet("background-color: rgba(255,255,255,0.15); border: none;")
         sep.setFixedSize(1, 30)
         layout.addWidget(sep)
-
-        layout.addSpacing(4)
-
-        # Boutons d'action rapide — visibles sur toutes les pages
-        sale_btn = QPushButton("🛒  Nouvelle vente")
-        sale_btn.setObjectName("NavSaleButton")
-        sale_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        sale_btn.clicked.connect(self.new_sale_requested.emit)
-        layout.addWidget(sale_btn)
-
-        layout.addSpacing(4)
-
-        add_btn = QPushButton("+  Produit")
-        add_btn.setObjectName("NavSaleButton")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.setStyleSheet(
-            "QPushButton#NavSaleButton { background-color: #0288d1; }"
-            "QPushButton#NavSaleButton:hover { background-color: #0277bd; }"
-            "QPushButton#NavSaleButton:pressed { background-color: #01579b; }"
-        )
-        add_btn.clicked.connect(self.add_product_requested.emit)
-        layout.addWidget(add_btn)
-
-        layout.addSpacing(8)
-
-        # Séparateur vertical
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setStyleSheet("background-color: #e0e0e0; border: none;")
-        sep2.setFixedSize(1, 30)
-        layout.addWidget(sep2)
 
         layout.addSpacing(4)
 
@@ -147,26 +116,59 @@ class Sidebar(QWidget):
         layout.addSpacing(8)
 
         refresh_btn = QPushButton("🔄")
-        refresh_btn.setToolTip("Actualiser toutes les données")
+        refresh_btn.setToolTip("Actualiser")
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        refresh_btn.setFixedSize(36, 36)
+        refresh_btn.setFixedSize(32, 32)
         refresh_btn.setStyleSheet(
-            "QPushButton { border: 1px solid #d1d5db; border-radius: 8px;"
-            " background: #f3f4f6; color: #374151; font-size: 17px; padding: 0; }"
-            "QPushButton:hover { background: #e0f2f1; border-color: #009688; }"
-            "QPushButton:pressed { background: #b2dfdb; }"
+            "QPushButton { border: 1px solid rgba(255,255,255,0.15); border-radius: 6px;"
+            " background: rgba(255,255,255,0.08); color: white; font-size: 15px; padding: 0; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); }"
+            "QPushButton:pressed { background: rgba(255,255,255,0.28); }"
         )
         refresh_btn.clicked.connect(self.refresh_requested.emit)
         layout.addWidget(refresh_btn)
 
-        layout.addSpacing(8)
-
         layout.addStretch()
 
-        # Boutons de contrôle de la fenêtre (remplace la barre de titre Windows)
+        # Séparateur
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setStyleSheet("background-color: rgba(255,255,255,0.15); border: none;")
+        sep2.setFixedSize(1, 30)
+        layout.addWidget(sep2)
+
+        layout.addSpacing(8)
+
+        # Boutons d'action rapide à droite
+        sale_btn = QPushButton("🛒  Nouvelle vente")
+        sale_btn.setObjectName("NavSaleButton")
+        sale_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sale_btn.clicked.connect(self.new_sale_requested.emit)
+        layout.addWidget(sale_btn)
+
+        layout.addSpacing(6)
+
+        add_btn = QPushButton("+  Produit")
+        add_btn.setObjectName("NavAddButton")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self.add_product_requested.emit)
+        layout.addWidget(add_btn)
+
+        layout.addSpacing(28)
+
+        # Séparateur
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.VLine)
+        sep3.setStyleSheet("background-color: rgba(255,255,255,0.15); border: none;")
+        sep3.setFixedSize(1, 30)
+        layout.addWidget(sep3)
+
+        layout.addSpacing(14)
+
+        # Boutons fenêtre
         min_btn = QPushButton("—")
         min_btn.setObjectName("WinMinBtn")
-        min_btn.setFixedSize(30, 26)
+        min_btn.setFixedSize(28, 26)
         min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         min_btn.setToolTip("Réduire")
         min_btn.clicked.connect(lambda: self.window().showMinimized())
@@ -176,9 +178,9 @@ class Sidebar(QWidget):
 
         close_btn = QPushButton("✕")
         close_btn.setObjectName("WinCloseBtn")
-        close_btn.setFixedSize(30, 26)
+        close_btn.setFixedSize(28, 26)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setToolTip("Fermer l'application")
+        close_btn.setToolTip("Fermer")
         close_btn.clicked.connect(lambda: self.window().close())
         layout.addWidget(close_btn)
 
@@ -204,24 +206,6 @@ class Sidebar(QWidget):
     def set_low_stock_badge(self, count: int) -> None:
         """Met à jour le badge de stock faible — visible dans la barre de statut."""
         pass
-
-    # ------------------------------------------------------------------
-    # Drag-to-move (fenêtre principale sans titre Windows)
-    # ------------------------------------------------------------------
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:
-        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.window().move(event.globalPosition().toPoint() - self._drag_pos)
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
 
     # Backward compat
     def set_stock_value(self, _formatted_value: str) -> None:

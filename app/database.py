@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -52,6 +54,13 @@ def _migrate_stock_movements_schema(engine) -> None:
             "supplier_id": "INTEGER REFERENCES suppliers(id)",
             "reseller_id": "INTEGER REFERENCES resellers(id)",
             "movement_batch_id": "INTEGER",
+            "linked_batch_id": "INTEGER",
+            "cashier_name": "VARCHAR(100) NOT NULL DEFAULT ''",
+            "versement_cents": "INTEGER NOT NULL DEFAULT 0",
+            "remise_cents": "INTEGER NOT NULL DEFAULT 0",
+            "reseller_balance_before_cents": "INTEGER NOT NULL DEFAULT 0",
+            "supplier_versement_cents": "INTEGER NOT NULL DEFAULT 0",
+            "supplier_balance_before_cents": "INTEGER NOT NULL DEFAULT 0",
         }
 
         for column_name, ddl_type in columns_to_add.items():
@@ -109,6 +118,34 @@ def _migrate_displays_schema(engine) -> None:
         if "color" in existing:
             connection.exec_driver_sql("ALTER TABLE displays DROP COLUMN color")
 
+        connection.commit()
+
+
+def _migrate_resellers_schema(engine) -> None:
+    """Ajoute balance_cents à la table resellers si absent (installations antérieures)."""
+    with engine.connect() as connection:
+        existing = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(resellers)").fetchall()
+        }
+        if "balance_cents" not in existing:
+            connection.exec_driver_sql(
+                "ALTER TABLE resellers ADD COLUMN balance_cents INTEGER NOT NULL DEFAULT 0"
+            )
+        connection.commit()
+
+
+def _migrate_suppliers_schema(engine) -> None:
+    """Ajoute balance_cents à la table suppliers si absent (installations antérieures)."""
+    with engine.connect() as connection:
+        existing = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(suppliers)").fetchall()
+        }
+        if "balance_cents" not in existing:
+            connection.exec_driver_sql(
+                "ALTER TABLE suppliers ADD COLUMN balance_cents INTEGER NOT NULL DEFAULT 0"
+            )
         connection.commit()
 
 
@@ -237,10 +274,26 @@ def _ensure_indexes(engine) -> None:
         "CREATE INDEX IF NOT EXISTS ix_stock_batches_created_at ON stock_batches (created_at)",
         "CREATE INDEX IF NOT EXISTS ix_stock_batches_movement_batch_id ON stock_batches (movement_batch_id)",
         "CREATE INDEX IF NOT EXISTS ix_stock_movements_movement_batch_id ON stock_movements (movement_batch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_stock_movements_linked_batch_id ON stock_movements (linked_batch_id)",
     ]
     with engine.connect() as connection:
         for statement in statements:
             connection.exec_driver_sql(statement)
+        connection.commit()
+
+
+def _seed_default_admin(engine) -> None:
+    """Crée le compte admin par défaut si la table users est vide."""
+    with engine.connect() as connection:
+        (count,) = connection.exec_driver_sql("SELECT COUNT(*) FROM users").fetchone()
+        if count == 0:
+            salt = secrets.token_hex(16)
+            pwd_hash = hashlib.sha256((salt + "admin123").encode("utf-8")).hexdigest()
+            connection.exec_driver_sql(
+                "INSERT INTO users (username, display_name, password_hash, password_salt, role, is_active, created_at)"
+                " VALUES ('admin', 'Administrateur', ?, ?, 'admin', 1, CURRENT_TIMESTAMP)",
+                (pwd_hash, salt),
+            )
         connection.commit()
 
 
@@ -258,10 +311,13 @@ def init_engine(database_path: Path | str | None = None):
     _migrate_stock_movements_schema(_engine)
     _migrate_displays_schema(_engine)
     _migrate_repairs_schema(_engine)
+    _migrate_resellers_schema(_engine)
+    _migrate_suppliers_schema(_engine)
     _seed_default_categories(_engine)
     _migrate_stock_batches_schema(_engine)
     _ensure_indexes(_engine)
     _seed_stock_batches(_engine)
+    _seed_default_admin(_engine)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

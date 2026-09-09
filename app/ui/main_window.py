@@ -44,6 +44,7 @@ from app.services import (
     list_movements,
 )
 from app.backup import is_configured, load_backup_config, upload_backup
+from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel
 from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
@@ -89,7 +90,7 @@ DISPLAY_COLUMNS = [
     "Référence",
     "Catégorie",
     "Marque",
-    "Modèle",
+    "Modèle compatible",
     "Qualité",
     "Prix achat",
     "Prix vente (détail)",
@@ -129,27 +130,25 @@ class MainWindow(QMainWindow):
         self._movements_total_count = 0
         self._movements_filter_type = "all"
 
-        self._geometry_locked = False
-
         self._build_ui()
         self._start_clock()
         self._start_backup_timer()
         self.refresh()
 
     # ------------------------------------------------------------------
-    # Verrouillage position et taille
+    # Plein écran permanent
     # ------------------------------------------------------------------
 
-    def showEvent(self, event):
+    def showEvent(self, event) -> None:
         super().showEvent(event)
-        if not self._geometry_locked:
-            QTimer.singleShot(200, self._lock_geometry)
+        self.showMaximized()
 
-    def _lock_geometry(self) -> None:
-        if not self._geometry_locked:
-            self._geometry_locked = True
-            self.setFixedSize(self.size())
-
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        from PySide6.QtCore import QEvent
+        if event.type() == QEvent.Type.WindowStateChange:
+            if not self.isMaximized() and not self.isMinimized():
+                QTimer.singleShot(0, self.showMaximized)
 
     # ------------------------------------------------------------------
     # Construction de l'interface
@@ -416,35 +415,28 @@ class MainWindow(QMainWindow):
         outer_layout.setContentsMargins(24, 16, 24, 20)
         outer_layout.setSpacing(14)
 
-        # Barre de recherche + actions
+        # Barre de recherche centrée
         search_row = QHBoxLayout()
-        search_row.setSpacing(10)
+        search_row.setSpacing(0)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Rechercher par référence, marque ou modèle...")
         self.search_input.setObjectName("PageSearchInput")
         self.search_input.setMinimumWidth(380)
-        self.search_input.setMaximumWidth(700)
+        self.search_input.setMaximumWidth(620)
 
         self._search_debounce = QTimer(self)
         self._search_debounce.setSingleShot(True)
         self._search_debounce.setInterval(300)
         self._search_debounce.timeout.connect(self._on_filters_changed)
         self.search_input.textChanged.connect(lambda: self._search_debounce.start())
-        search_row.addWidget(self.search_input)
 
         search_row.addStretch()
+        search_row.addWidget(self.search_input)
+        search_row.addStretch()
 
-        sale_btn = QPushButton("🛒  Nouvelle vente")
-        sale_btn.clicked.connect(self._on_new_sale)
-        search_row.addWidget(sale_btn)
-
-        add_btn = QPushButton("+  Ajouter un produit")
-        add_btn.clicked.connect(self._on_add)
-        search_row.addWidget(add_btn)
-
-        outer_layout.addLayout(search_row)
         outer_layout.addLayout(self._build_stat_cards())
+        outer_layout.addLayout(search_row)
 
         container = QFrame()
         container.setObjectName("Card")
@@ -533,12 +525,12 @@ class MainWindow(QMainWindow):
         self.page_size_combo.currentIndexChanged.connect(self._on_page_size_changed)
         layout.addWidget(self.page_size_combo)
 
-        self.first_page_button = QPushButton("⏮")
+        self.first_page_button = QPushButton("⟨⟨")
         self.first_page_button.setObjectName("PageNavButton")
         self.first_page_button.clicked.connect(lambda: self._go_to_page(1))
         layout.addWidget(self.first_page_button)
 
-        self.prev_page_button = QPushButton("‹")
+        self.prev_page_button = QPushButton("⟨")
         self.prev_page_button.setObjectName("PageNavButton")
         self.prev_page_button.clicked.connect(lambda: self._go_to_page(self._current_page - 1))
         layout.addWidget(self.prev_page_button)
@@ -549,12 +541,12 @@ class MainWindow(QMainWindow):
         self.page_indicator_label.setFixedWidth(32)
         layout.addWidget(self.page_indicator_label)
 
-        self.next_page_button = QPushButton("›")
+        self.next_page_button = QPushButton("⟩")
         self.next_page_button.setObjectName("PageNavButton")
         self.next_page_button.clicked.connect(lambda: self._go_to_page(self._current_page + 1))
         layout.addWidget(self.next_page_button)
 
-        self.last_page_button = QPushButton("⏭")
+        self.last_page_button = QPushButton("⟩⟩")
         self.last_page_button.setObjectName("PageNavButton")
         self.last_page_button.clicked.connect(lambda: self._go_to_page(self._total_pages()))
         layout.addWidget(self.last_page_button)
@@ -584,14 +576,14 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.movements_page_size_combo)
 
-        self.movements_first_page_button = QPushButton("⏮")
+        self.movements_first_page_button = QPushButton("⟨⟨")
         self.movements_first_page_button.setObjectName("PageNavButton")
         self.movements_first_page_button.clicked.connect(
             lambda: self._go_to_movements_page(1)
         )
         layout.addWidget(self.movements_first_page_button)
 
-        self.movements_prev_page_button = QPushButton("‹")
+        self.movements_prev_page_button = QPushButton("⟨")
         self.movements_prev_page_button.setObjectName("PageNavButton")
         self.movements_prev_page_button.clicked.connect(
             lambda: self._go_to_movements_page(self._movements_current_page - 1)
@@ -604,14 +596,14 @@ class MainWindow(QMainWindow):
         self.movements_page_indicator_label.setFixedWidth(32)
         layout.addWidget(self.movements_page_indicator_label)
 
-        self.movements_next_page_button = QPushButton("›")
+        self.movements_next_page_button = QPushButton("⟩")
         self.movements_next_page_button.setObjectName("PageNavButton")
         self.movements_next_page_button.clicked.connect(
             lambda: self._go_to_movements_page(self._movements_current_page + 1)
         )
         layout.addWidget(self.movements_next_page_button)
 
-        self.movements_last_page_button = QPushButton("⏭")
+        self.movements_last_page_button = QPushButton("⟩⟩")
         self.movements_last_page_button.setObjectName("PageNavButton")
         self.movements_last_page_button.clicked.connect(
             lambda: self._go_to_movements_page(self._movements_total_pages())
@@ -747,6 +739,9 @@ class MainWindow(QMainWindow):
         card_layout.addWidget(info_label)
 
         card_layout.addSpacing(12)
+        card_layout.addWidget(self._build_ticket_section())
+
+        card_layout.addSpacing(12)
         card_layout.addWidget(self._build_database_section())
 
         card_layout.addSpacing(12)
@@ -865,6 +860,68 @@ class MainWindow(QMainWindow):
 
         self.backup_panel = BackupPanel()
         section_layout.addWidget(self.backup_panel)
+
+        return section
+
+    def _build_ticket_section(self) -> QWidget:
+        from PySide6.QtWidgets import QLineEdit as _LE
+        section = QFrame()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+
+        lbl = QLabel("🧾  Informations du ticket de caisse")
+        lbl.setStyleSheet("font-weight: 700; font-size: 14px;")
+        lay.addWidget(lbl)
+
+        hint = QLabel("Ces informations apparaissent en en-tête sur chaque ticket imprimé.")
+        hint.setStyleSheet("color: #8991ac; font-size: 12px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        cfg = load_ticket_config()
+
+        form = QFrame()
+        form_lay = QVBoxLayout(form)
+        form_lay.setContentsMargins(0, 0, 0, 0)
+        form_lay.setSpacing(8)
+
+        def _row(label_text: str, value: str) -> _LE:
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            lbl_w = QLabel(label_text)
+            lbl_w.setFixedWidth(140)
+            lbl_w.setStyleSheet("color: #555; font-size: 13px;")
+            field = _LE()
+            field.setText(value)
+            field.setMinimumHeight(36)
+            row.addWidget(lbl_w)
+            row.addWidget(field)
+            form_lay.addLayout(row)
+            return field
+
+        self._ticket_name_field = _row("Nom du magasin", cfg["store_name"])
+        self._ticket_phone_field = _row("Téléphone", cfg["store_phone"])
+        self._ticket_tagline_field = _row("Slogan / Activité", cfg["store_tagline"])
+
+        lay.addWidget(form)
+
+        save_btn = QPushButton("💾  Enregistrer")
+        save_btn.setFixedWidth(160)
+        save_btn.setFixedHeight(38)
+
+        def _save():
+            new_cfg = {
+                "store_name": self._ticket_name_field.text().strip(),
+                "store_phone": self._ticket_phone_field.text().strip(),
+                "store_tagline": self._ticket_tagline_field.text().strip(),
+            }
+            save_ticket_config(new_cfg)
+            save_btn.setText("✓  Enregistré")
+            QTimer.singleShot(2000, lambda: save_btn.setText("💾  Enregistrer"))
+
+        save_btn.clicked.connect(_save)
+        lay.addWidget(save_btn)
 
         return section
 

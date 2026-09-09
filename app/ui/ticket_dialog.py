@@ -13,7 +13,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.printing import STORE_NAME, STORE_PHONE, STORE_TAGLINE, _collect_ticket_data, _da
+from app.money import format_balance_ticket
+from app.printing import _collect_ticket_data, _da
+from app.ticket_config import load_ticket_config
 from app.ui.frameless_dialog import FramelessDialog
 
 
@@ -119,79 +121,116 @@ class TicketPreviewDialog(FramelessDialog):
 
     def _render_html(self) -> str:
         d = self._data
+        cfg = load_ticket_config()
+        STORE_NAME = cfg["store_name"]
+        STORE_PHONE = cfg["store_phone"]
+        STORE_TAGLINE = cfg["store_tagline"]
+
         lines_html = ""
         for line in d["lines"]:
             lines_html += (
                 f"<tr>"
-                f"<td style='padding:4px 2px;border-bottom:1px dotted #d4d0cb;'>{line['label']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;'>{line['qty']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;'>{_da(line['unit_cents'])}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;'>{_da(line['total_cents'])}</td>"
+                f"<td style='padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;'>{line['label']}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{line['qty']}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{_da(line['unit_cents'])}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{_da(line['total_cents'])}</td>"
                 f"</tr>"
             )
 
-        total_da = _da(d["total_cents"])
+        remise_html = ""
+        ttc_label = "TOTAL"
+        if d.get("remise_cents", 0) > 0:
+            remise_html = f"""
+  <table width="100%" style="font-size:10px;margin:2px 0;">
+    <tr><td>TOTAL :</td><td style="text-align:right;">{_da(d['total_brut_cents'])} DA</td></tr>
+    <tr><td style="color:#dc2626;">REMISE :</td><td style="text-align:right;color:#dc2626;">- {_da(d['remise_cents'])} DA</td></tr>
+  </table>
+  <hr style="border:none;border-top:1px solid #1a1a1a;margin:3px 0;">"""
+            ttc_label = "TTC À PAYER"
+
+        solde_html = ""
+        if d.get("has_reseller") and d.get("versement_cents", -1) >= 0:
+            solde_html = f"""
+  <hr style="border:none;border-top:1px dashed #888;margin:6px 0 3px;">
+  <table width="100%" style="font-size:10px;">
+    <tr><td>Anc. solde :</td><td style="text-align:right;">{format_balance_ticket(d['balance_before_cents'])}</td></tr>
+    <tr><td>Total achat :</td><td style="text-align:right;">{_da(d['total_cents'])} DA</td></tr>
+    <tr><td>Versement :</td><td style="text-align:right;">{_da(d['versement_cents'])} DA</td></tr>
+  </table>
+  <hr style="border:none;border-top:1px solid #1a1a1a;margin:3px 0;">
+  <table width="100%" style="font-size:11px;font-weight:bold;">
+    <tr><td>Nouv. solde :</td><td style="text-align:right;">{format_balance_ticket(d['balance_after_cents'])}</td></tr>
+  </table>"""
+
+        client_block = ""
+        if d.get("reseller_name"):
+            client_block = f"""
+  <div style="border:1px dashed #888;border-radius:3px;padding:4px 6px;margin:6px 0;">
+    <p style="margin:0;font-weight:bold;font-size:11px;">&#9658; Client : {d['reseller_name']}</p>
+    {"<p style='margin:1px 0;font-size:10px;color:#555;'>&#9990; " + d['reseller_phone'] + "</p>" if d.get('reseller_phone') else ""}
+  </div>"""
+
+        cashier_line = (
+            f"<p style='margin:2px 0;font-size:10px;color:#555;'>Caissier : {d['cashier_name']}</p>"
+            if d.get("cashier_name") else ""
+        )
+
         return f"""
 <html><body style="font-family:'Courier New',Courier,monospace;font-size:11px;
                    color:#1a1a1a;background:#fefdfb;margin:10px 8px;">
 
-  <!-- Logo / En-tête -->
-  <div style="text-align:center;margin-bottom:4px;">
-    <span style="display:inline-block;border:1.5px solid #1a1a1a;border-radius:6px;
-                 padding:2px 8px;font-size:9px;letter-spacing:1px;">
-      <span style="font-size:13px;font-weight:bold;">ms</span>
-    </span>
-  </div>
-  <p style="text-align:center;font-weight:bold;font-size:15px;
-            letter-spacing:3px;margin:2px 0;">{STORE_NAME}</p>
-  <p style="text-align:center;font-size:9px;color:#5a5650;margin:1px 0;">{STORE_TAGLINE}</p>
-  <p style="text-align:center;font-weight:bold;font-size:11px;margin:2px 0 6px;">{STORE_PHONE}</p>
+  <p style="text-align:center;font-weight:bold;font-size:17px;
+            letter-spacing:2px;margin:4px 0 1px;">{STORE_NAME}</p>
+  <p style="text-align:center;font-size:9px;color:#555;margin:1px 0;">{STORE_TAGLINE}</p>
+  <p style="text-align:center;font-weight:bold;font-size:11px;margin:2px 0 6px;">&#9990; {STORE_PHONE}</p>
 
-  <hr style="border:none;border-top:1px dashed #c9c5bf;margin:6px 0;">
+  <hr style="border:none;border-top:1.5px solid #1a1a1a;border-bottom:1px solid #1a1a1a;margin:6px 0 4px;">
 
-  <p style="margin:2px 0;">Ticket : <b>{d['ticket_num']:06d}</b></p>
-  <p style="margin:2px 0;">{d['date_str']}</p>
-  {"<p style='margin:2px 0;color:#5a5650;'>Caissier : " + d['cashier_name'] + "</p>" if d.get('cashier_name') else ""}
-  {"<p style='margin:4px 0;font-weight:bold;'>Client : " + d['reseller_name'] + "</p>" if d.get('reseller_name') else ""}
-  {"<p style='margin:2px 0;'>Tél : " + d['reseller_phone'] + "</p>" if d.get('reseller_name') and d.get('reseller_phone') else ""}
+  <table width="100%" style="margin:2px 0;"><tr>
+    <td style="font-size:11px;">N&#176; <b>#{d['ticket_num']:06d}</b></td>
+    <td style="text-align:right;font-size:10px;color:#555;">{d['date_str']}</td>
+  </tr></table>
+  {cashier_line}
+  {client_block}
 
-  <hr style="border:none;border-top:1px dashed #c9c5bf;margin:6px 0;">
+  <hr style="border:none;border-top:1.5px solid #1a1a1a;border-bottom:1px solid #1a1a1a;margin:6px 0 4px;">
 
-  <!-- Tableau produits -->
   <table width="100%" cellspacing="0" cellpadding="0"
          style="border-collapse:collapse;font-size:10px;">
     <thead>
-      <tr style="border-bottom:2px solid #1a1a1a;">
-        <th style="text-align:left;padding:3px 2px;">ARTICLE</th>
-        <th style="text-align:right;padding:3px 2px;">QTE</th>
-        <th style="text-align:right;padding:3px 2px;">P.U</th>
-        <th style="text-align:right;padding:3px 2px;">TOTAL</th>
+      <tr>
+        <th style="text-align:left;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">LIBELLE</th>
+        <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">QTE</th>
+        <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">P.U</th>
+        <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">TOTAL</th>
       </tr>
     </thead>
     <tbody>{lines_html}</tbody>
   </table>
 
-  <hr style="border:none;border-top:1px dashed #c9c5bf;margin:6px 0;">
-
-  <p style="margin:2px 0;font-size:9px;">
-    NBR ART: {d['nb_articles']} &nbsp; TQTE: {d['nb_pieces']}
+  <hr style="border:none;border-top:1px solid #1a1a1a;margin:4px 0 2px;">
+  <p style="margin:2px 0;font-size:9px;color:#555;">
+    NBR ART : {d['nb_articles']}  &nbsp; TQTE : {d['nb_pieces']}
   </p>
 
-  <table width="100%" style="margin-top:4px;">
-    <tr>
-      <td style="font-size:14px;font-weight:bold;">TOTAL</td>
-      <td style="text-align:right;font-size:14px;font-weight:bold;">{total_da} DA</td>
-    </tr>
-  </table>
+  {remise_html}
 
-  <hr style="border:none;border-top:2px solid #1a1a1a;margin:6px 0;">
+  <div style="border:1.5px solid #1a1a1a;border-radius:3px;padding:5px 6px;margin:6px 0;
+              display:flex;justify-content:space-between;">
+    <span style="font-size:13px;font-weight:bold;">{ttc_label}</span>
+    <span style="font-size:13px;font-weight:bold;">{_da(d['total_cents'])} DA</span>
+  </div>
 
-  <p style="text-align:center;font-size:9px;color:#5a5650;margin:8px 0 2px;">
+  {solde_html}
+
+  <hr style="border:none;border-top:1px dashed #888;margin:6px 0;">
+  <p style="text-align:center;font-weight:bold;font-size:10px;margin:4px 0 1px;">
     Merci pour votre confiance !
   </p>
-  <p style="text-align:center;font-size:9px;color:#5a5650;margin:2px 0;">
-    {STORE_NAME} &mdash; {STORE_PHONE}
+  <p style="text-align:center;font-size:9px;color:#888;margin:1px 0;">
+    &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;
   </p>
+
 </body></html>
 """
 
@@ -207,9 +246,9 @@ class TicketPreviewDialog(FramelessDialog):
         from app.printing import _render_ticket
 
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        page_size = QPageSize(QSizeF(58.0, 220.0), QPageSize.Unit.Millimeter)
+        page_size = QPageSize(QSizeF(40.0, 220.0), QPageSize.Unit.Millimeter)
         printer.setPageSize(page_size)
-        printer.setPageMargins(QMarginsF(3, 4, 3, 4), QPageLayout.Unit.Millimeter)
+        printer.setPageMargins(QMarginsF(2, 3, 2, 3), QPageLayout.Unit.Millimeter)
 
         dlg = QPrintDialog(printer, self)
         dlg.setWindowTitle("Imprimer le ticket")

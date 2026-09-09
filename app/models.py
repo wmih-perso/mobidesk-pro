@@ -126,6 +126,25 @@ class StockMovement(Base):
     # le même movement_batch_id — permet l'édition groupée (annuler + recréer).
     movement_batch_id: Mapped[int | None] = mapped_column(default=None, index=True)
 
+    # Lien vers le lot d'origine (vente ou entrée stock) quand ce mouvement
+    # est un retour — permet d'afficher les retours dans le détail de la vente.
+    linked_batch_id: Mapped[int | None] = mapped_column(default=None, index=True)
+
+    # Nom du caissier figé au moment de la vente (snapshot — reste valide même
+    # si le compte est renommé ou supprimé par la suite).
+    cashier_name: Mapped[str] = mapped_column(String(100), default="")
+
+    # Montant versé par le revendeur lors de cette vente (0 si non renseigné).
+    versement_cents: Mapped[int] = mapped_column(default=0)
+    # Remise globale appliquée à ce lot de vente (en centimes, avant répartition).
+    remise_cents: Mapped[int] = mapped_column(default=0)
+    # Solde du revendeur figé AVANT cette vente (snapshot pour historique ticket).
+    reseller_balance_before_cents: Mapped[int] = mapped_column(default=0)
+    # Montant versé au fournisseur lors de cet achat.
+    supplier_versement_cents: Mapped[int] = mapped_column(default=0)
+    # Solde du fournisseur figé AVANT cet achat (snapshot pour ticket).
+    supplier_balance_before_cents: Mapped[int] = mapped_column(default=0)
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property
@@ -207,12 +226,37 @@ class Reseller(Base):
     address: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Solde courant en centimes. Positif = le revendeur doit de l'argent.
+    # Négatif = on lui doit (ex. retour sans remboursement).
+    balance_cents: Mapped[int] = mapped_column(default=0)
 
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(default=_now, onupdate=_now)
 
     def __repr__(self) -> str:
         return f"<Reseller {self.name}>"
+
+
+class ResellerPayment(Base):
+    """Versement d'un revendeur — réduit son solde sans mouvement de stock."""
+
+    __tablename__ = "reseller_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    reseller_id: Mapped[int] = mapped_column(ForeignKey("resellers.id"), index=True)
+    reseller: Mapped["Reseller"] = relationship()
+
+    amount_cents: Mapped[int]
+    balance_before_cents: Mapped[int] = mapped_column(default=0)
+    balance_after_cents: Mapped[int] = mapped_column(default=0)
+    note: Mapped[str] = mapped_column(String(255), default="")
+    cashier_name: Mapped[str] = mapped_column(String(100), default="")
+
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
+
+    def __repr__(self) -> str:
+        return f"<ResellerPayment reseller_id={self.reseller_id} amount={self.amount_cents}>"
 
 
 class Supplier(Base):
@@ -227,12 +271,34 @@ class Supplier(Base):
     address: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Solde cumulé envers le fournisseur : > 0 = on lui doit, < 0 = il nous doit.
+    balance_cents: Mapped[int] = mapped_column(default=0)
 
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(default=_now, onupdate=_now)
 
     def __repr__(self) -> str:
         return f"<Supplier {self.name}>"
+
+
+class User(Base):
+    """Compte utilisateur — caissier ou administrateur."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(100), default="")
+    password_hash: Mapped[str] = mapped_column(String(64), default="")
+    password_salt: Mapped[str] = mapped_column(String(32), default="")
+    role: Mapped[str] = mapped_column(String(10), default="cashier")  # "admin" | "cashier"
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
+
+    def __repr__(self) -> str:
+        return f"<User {self.username} ({self.role})>"
 
 
 class StockBatch(Base):
