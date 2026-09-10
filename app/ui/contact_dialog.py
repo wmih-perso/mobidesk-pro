@@ -115,13 +115,25 @@ class ContactDialog(FramelessDialog):
         buttons_row.addStretch()
 
         cancel_btn = QPushButton("✕  Annuler")
-        cancel_btn.setObjectName("SecondaryButton")
         cancel_btn.setFixedHeight(40)
+        cancel_btn.setMinimumWidth(110)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #ffffff; color: #424242; border: 1px solid #bdbdbd;"
+            " border-radius: 6px; font-weight: 600; padding: 0 14px; }"
+            "QPushButton:hover { background: #f5f5f5; border-color: #9e9e9e; }"
+        )
         cancel_btn.clicked.connect(self.reject)
         buttons_row.addWidget(cancel_btn)
 
         save_btn = QPushButton("💾  Enregistrer")
         save_btn.setFixedHeight(40)
+        save_btn.setMinimumWidth(140)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #2563eb; color: white; border: none;"
+            " border-radius: 6px; font-weight: 700; font-size: 13px; padding: 0 16px; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
+        )
         save_btn.clicked.connect(self._on_save)
         buttons_row.addWidget(save_btn)
 

@@ -116,8 +116,13 @@ class _UserDialog(FramelessDialog):
         root.addWidget(self.error_label)
 
         btn_row = QHBoxLayout()
-        cancel = QPushButton("Annuler")
-        cancel.setObjectName("SecondaryButton")
+        cancel = QPushButton("✕  Annuler")
+        cancel.setFixedHeight(36)
+        cancel.setStyleSheet(
+            "QPushButton { background: #ffffff; color: #424242; border: 1px solid #bdbdbd;"
+            " border-radius: 6px; font-weight: 600; padding: 0 14px; }"
+            "QPushButton:hover { background: #f5f5f5; border-color: #9e9e9e; }"
+        )
         cancel.clicked.connect(self.reject)
         btn_row.addWidget(cancel)
         btn_row.addStretch()

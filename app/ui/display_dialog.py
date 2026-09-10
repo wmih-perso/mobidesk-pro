@@ -10,8 +10,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -47,8 +51,7 @@ class DisplayDialog(FramelessDialog):
     def __init__(self, display_id: int | None = None) -> None:
         super().__init__()
         self.display_id = display_id
-        self.setMinimumWidth(760)
-        self.setMinimumHeight(560)
+        self.setMinimumWidth(700)
         self.setModal(True)
         self._build_ui()
         if display_id is not None:
@@ -83,8 +86,18 @@ class DisplayDialog(FramelessDialog):
         return btn
 
     def _build_body(self) -> QWidget:
+        # Wrapper scrollable pour s'adapter à tous les écrans / DPI
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: white; border: none; }")
+
         body = QWidget()
         body.setStyleSheet("background: white;")
+        body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        scroll.setWidget(body)
+
         outer = QHBoxLayout(body)
         outer.setContentsMargins(28, 20, 28, 12)
         outer.setSpacing(0)
@@ -96,7 +109,7 @@ class DisplayDialog(FramelessDialog):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(2, 1)
-        grid.setColumnMinimumWidth(1, 32)
+        grid.setColumnMinimumWidth(1, 24)
 
         row = 0
 
@@ -124,12 +137,35 @@ class DisplayDialog(FramelessDialog):
         self._style_input(self.brand_input)
         grid.addWidget(self.brand_input, row, 0)
 
-        self.category_input = QComboBox()
-        self.category_input.setEditable(True)
-        self._style_combo(self.category_input)
         with session_scope() as session:
-            self.category_input.addItems([c.name for c in list_categories(session)])
-        grid.addWidget(self.category_input, row, 2)
+            self._all_categories = [c.name for c in list_categories(session)]
+
+        cat_container = QWidget()
+        cat_container.setStyleSheet("background: transparent;")
+        cat_layout = QVBoxLayout(cat_container)
+        cat_layout.setContentsMargins(0, 0, 0, 0)
+        cat_layout.setSpacing(2)
+
+        self.category_search = QLineEdit()
+        self.category_search.setPlaceholderText("Tapez pour filtrer…")
+        self._style_input(self.category_search)
+        self.category_search.textChanged.connect(self._on_category_search)
+        cat_layout.addWidget(self.category_search)
+
+        self.category_list = QListWidget()
+        self.category_list.setFixedHeight(96)
+        self.category_list.setVisible(False)
+        self.category_list.setStyleSheet(
+            "QListWidget { border: 1px solid #bfdbfe; border-radius: 6px;"
+            " font-size: 13px; background: white; outline: none; }"
+            "QListWidget::item { padding: 5px 10px; border-radius: 4px; }"
+            "QListWidget::item:selected { background: #2563eb; color: white; }"
+            "QListWidget::item:hover:!selected { background: #eff6ff; color: #1e40af; }"
+        )
+        self.category_list.itemClicked.connect(self._on_category_select)
+        cat_layout.addWidget(self.category_list)
+
+        grid.addWidget(cat_container, row, 2)
         row += 1
 
         grid.addWidget(_field_label("Qualité"), row, 0)
@@ -202,7 +238,7 @@ class DisplayDialog(FramelessDialog):
         grid.addWidget(self.notes_input, row, 0, 1, 3)
 
         outer.addWidget(grid_widget, stretch=1)
-        return body
+        return scroll
 
     def _build_error_bar(self) -> QWidget:
         wrapper = QWidget()
@@ -298,11 +334,28 @@ class DisplayDialog(FramelessDialog):
     # Chargement
     # ------------------------------------------------------------------
 
+    def _on_category_search(self, text: str) -> None:
+        self.category_list.clear()
+        q = text.strip().lower()
+        matches = [c for c in self._all_categories if q in c.lower()] if q else self._all_categories
+        for name in matches:
+            self.category_list.addItem(QListWidgetItem(name))
+        self.category_list.setVisible(bool(q) and bool(matches))
+
+    def _on_category_select(self, item: QListWidgetItem) -> None:
+        self.category_search.blockSignals(True)
+        self.category_search.setText(item.text())
+        self.category_search.blockSignals(False)
+        self.category_list.setVisible(False)
+
     def _load_display(self, display_id: int) -> None:
         with session_scope() as session:
             display = session.get(Display, display_id)
             self.reference_input.setText(display.reference)
-            self.category_input.setCurrentText(display.category)
+            self.category_search.blockSignals(True)
+            self.category_search.setText(display.category)
+            self.category_search.blockSignals(False)
+            self.category_list.setVisible(False)
             self.brand_input.setText(display.brand)
             self.phone_model_input.setText(display.phone_model)
             self.quality_input.setCurrentText(display.quality)
@@ -317,9 +370,10 @@ class DisplayDialog(FramelessDialog):
     # ------------------------------------------------------------------
 
     def _fields(self) -> dict:
+        category = self.category_search.text().strip()
         return dict(
             reference=self.reference_input.text(),
-            category=self.category_input.currentText(),
+            category=category,
             brand=self.brand_input.text(),
             phone_model=self.phone_model_input.text(),
             quality=self.quality_input.currentText(),
@@ -332,6 +386,11 @@ class DisplayDialog(FramelessDialog):
 
     def _save(self) -> bool:
         self.error_label.hide()
+        if not self.category_search.text().strip():
+            self.error_label.setText("La catégorie est obligatoire.")
+            self.error_label.show()
+            self.category_search.setFocus()
+            return False
         try:
             with session_scope() as session:
                 if self.display_id is None:
@@ -369,11 +428,8 @@ class DisplayDialog(FramelessDialog):
         if self.quantity_input is not None:
             self.quantity_input.setValue(0)
         self.reference_input.setFocus()
-        current = self.category_input.currentText()
-        self.category_input.clear()
-        with session_scope() as session:
-            self.category_input.addItems([c.name for c in list_categories(session)])
-        self.category_input.setCurrentText(current)
+        self.category_search.clear()
+        self.category_list.setVisible(False)
 
     # ------------------------------------------------------------------
     # Suppression

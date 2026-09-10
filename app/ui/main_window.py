@@ -716,44 +716,62 @@ class MainWindow(QMainWindow):
 
     def _build_settings_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(24, 20, 24, 24)
-        layout.setSpacing(16)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(24, 20, 24, 24)
+        page_layout.setSpacing(0)
+
+        # Titre hors carte
+        header_row = QHBoxLayout()
+        title = QLabel("⚙️  Paramètres")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #0f172a;")
+        header_row.addWidget(title)
+        header_row.addStretch()
+        info_label = QLabel(f"MobiDesk Pro  —  v{APP_VERSION}")
+        info_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        header_row.addWidget(info_label)
+        page_layout.addLayout(header_row)
+        page_layout.addSpacing(16)
+
+        # Carte scrollable
+        from PySide6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         card = QFrame()
         card.setObjectName("Card")
         apply_card_shadow(card)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 22, 24, 22)
-        card_layout.setSpacing(10)
+        card_layout.setContentsMargins(28, 24, 28, 28)
+        card_layout.setSpacing(0)
 
-        title = QLabel("⚙️  Paramètres")
-        title.setStyleSheet("font-size: 18px; font-weight: 700;")
-        card_layout.addWidget(title)
+        def _separator():
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setStyleSheet("color: #e5e7eb; background: #e5e7eb; max-height: 1px;")
+            return line
 
-        info_label = QLabel(
-            f"MobiDesk Pro — Gestion du stock de produits\nVersion {APP_VERSION}"
-        )
-        info_label.setStyleSheet("color: #8991ac; font-weight: 500;")
-        card_layout.addWidget(info_label)
-
-        card_layout.addSpacing(12)
         card_layout.addWidget(self._build_ticket_section())
-
-        card_layout.addSpacing(12)
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_database_section())
-
-        card_layout.addSpacing(12)
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_backup_section())
-
-        card_layout.addSpacing(12)
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_security_section())
-
-        card_layout.addSpacing(12)
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_update_section())
 
-        layout.addWidget(card)
+        scroll.setWidget(card)
+        page_layout.addWidget(scroll)
         return page
 
     def _build_resellers_page(self) -> QWidget:
@@ -846,8 +864,8 @@ class MainWindow(QMainWindow):
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(8)
 
-        label = QLabel("Sauvegarde automatique — Cloud")
-        label.setStyleSheet("font-weight: 700;")
+        label = QLabel("☁️  Sauvegarde automatique — Cloud")
+        label.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
         section_layout.addWidget(label)
 
         hint = QLabel(
@@ -871,11 +889,11 @@ class MainWindow(QMainWindow):
         lay.setSpacing(10)
 
         lbl = QLabel("🧾  Informations du ticket de caisse")
-        lbl.setStyleSheet("font-weight: 700; font-size: 14px;")
+        lbl.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
         lay.addWidget(lbl)
 
         hint = QLabel("Ces informations apparaissent en en-tête sur chaque ticket imprimé.")
-        hint.setStyleSheet("color: #8991ac; font-size: 12px;")
+        hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
@@ -931,8 +949,8 @@ class MainWindow(QMainWindow):
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(8)
 
-        label = QLabel("Emplacement de la base de données")
-        label.setStyleSheet("font-weight: 700;")
+        label = QLabel("🗄️  Emplacement de la base de données")
+        label.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
         section_layout.addWidget(label)
 
         db_path = get_database_path()
@@ -973,8 +991,8 @@ class MainWindow(QMainWindow):
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(8)
 
-        label = QLabel("Sécurité")
-        label.setStyleSheet("font-weight: 700;")
+        label = QLabel("🔒  Sécurité")
+        label.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
         section_layout.addWidget(label)
 
         row = QHBoxLayout()
@@ -1000,8 +1018,8 @@ class MainWindow(QMainWindow):
         section_layout.setContentsMargins(0, 0, 0, 0)
         section_layout.setSpacing(8)
 
-        label = QLabel("Mises à jour")
-        label.setStyleSheet("font-weight: 700;")
+        label = QLabel("🔄  Mises à jour")
+        label.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
         section_layout.addWidget(label)
 
         row = QHBoxLayout()

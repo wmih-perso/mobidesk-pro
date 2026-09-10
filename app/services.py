@@ -630,6 +630,8 @@ def create_replacement(
     """
     if quantity <= 0:
         raise StockError("La quantité doit être supérieure à 0.")
+    if linked_return_batch_id is not None and has_replacement(session, linked_return_batch_id):
+        raise StockError("Ce retour a déjà été résolu.")
     display = get_display(session, display_id)
     before = display.quantity
     display.quantity += quantity
@@ -686,6 +688,8 @@ def create_refund_resolution(
     le stock n'est pas modifié car le produit a déjà quitté le stock
     lors du retour fournisseur.
     """
+    if has_replacement(session, linked_return_batch_id):
+        raise StockError("Ce retour a déjà été résolu.")
     display = get_display(session, display_id)
     mvt = StockMovement(
         display_id=display_id,

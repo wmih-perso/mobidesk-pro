@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -67,73 +67,101 @@ class BackupPanel(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         # Sélecteur fournisseur
         provider_row = QHBoxLayout()
-        provider_row.addWidget(QLabel("Fournisseur :"))
+        provider_row.setSpacing(8)
+        prov_lbl = QLabel("Fournisseur :")
+        prov_lbl.setFixedWidth(140)
+        prov_lbl.setFixedHeight(38)
+        prov_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        provider_row.addWidget(prov_lbl)
         self._provider_combo = QComboBox()
+        self._provider_combo.setFixedHeight(38)
         self._provider_combo.addItems(list(_PROVIDERS.keys()))
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
         provider_row.addWidget(self._provider_combo)
-
         guide_btn = QPushButton("Guide")
+        guide_btn.setFixedHeight(38)
         guide_btn.setObjectName("SecondaryButton")
         guide_btn.clicked.connect(self._on_guide)
         provider_row.addWidget(guide_btn)
         provider_row.addStretch()
         layout.addLayout(provider_row)
 
-        # Formulaire de configuration
-        form = QFormLayout()
-        form.setSpacing(8)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        # Formulaire — QGridLayout avec espacement vertical garanti
+        _inp_style = (
+            "QLineEdit { border: 1px solid #d1d5db; border-radius: 6px;"
+            " padding: 7px 10px; font-size: 13px; background: #ffffff; }"
+            "QLineEdit:focus { border: 2px solid #2563eb; }"
+        )
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setColumnMinimumWidth(0, 140)
+        grid.setColumnStretch(1, 1)
+
+        def _lbl(text):
+            l = QLabel(text + " :")
+            l.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            l.setMinimumHeight(36)
+            return l
 
         self._endpoint_input = QLineEdit(self._config.get("endpoint_url", ""))
         self._endpoint_input.setPlaceholderText("https://...")
+        self._endpoint_input.setMinimumHeight(36)
+        self._endpoint_input.setStyleSheet(_inp_style)
         self._endpoint_input.textChanged.connect(self._save_config)
-        form.addRow("Endpoint URL :", self._endpoint_input)
+        grid.addWidget(_lbl("Endpoint URL"), 0, 0)
+        grid.addWidget(self._endpoint_input, 0, 1)
 
         self._key_input = QLineEdit(self._config.get("access_key_id", ""))
+        self._key_input.setMinimumHeight(36)
+        self._key_input.setStyleSheet(_inp_style)
         self._key_input.textChanged.connect(self._save_config)
-        form.addRow("Access Key ID :", self._key_input)
+        grid.addWidget(_lbl("Access Key ID"), 1, 0)
+        grid.addWidget(self._key_input, 1, 1)
 
         self._secret_input = QLineEdit(self._config.get("secret_access_key", ""))
         self._secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._secret_input.setMinimumHeight(36)
+        self._secret_input.setStyleSheet(_inp_style)
         self._secret_input.textChanged.connect(self._save_config)
-        form.addRow("Secret Key :", self._secret_input)
+        grid.addWidget(_lbl("Secret Key"), 2, 0)
+        grid.addWidget(self._secret_input, 2, 1)
 
         self._bucket_input = QLineEdit(self._config.get("bucket_name", ""))
         self._bucket_input.setPlaceholderText("mobidesk-backups")
+        self._bucket_input.setMinimumHeight(36)
+        self._bucket_input.setStyleSheet(_inp_style)
         self._bucket_input.textChanged.connect(self._save_config)
-        form.addRow("Nom du bucket :", self._bucket_input)
+        grid.addWidget(_lbl("Nom du bucket"), 3, 0)
+        grid.addWidget(self._bucket_input, 3, 1)
 
-        layout.addLayout(form)
-
-        # Paramètres
-        params_row = QHBoxLayout()
-        params_row.addWidget(QLabel("Conserver les"))
         self._keep_spin = QSpinBox()
         self._keep_spin.setRange(1, 365)
         self._keep_spin.setValue(self._config.get("keep_last", 30))
         self._keep_spin.setSuffix(" dernières sauvegardes")
-        self._keep_spin.setFixedWidth(220)
+        self._keep_spin.setMinimumHeight(36)
+        self._keep_spin.setFixedWidth(230)
         self._keep_spin.valueChanged.connect(self._save_config)
-        params_row.addWidget(self._keep_spin)
-        params_row.addStretch()
-        layout.addLayout(params_row)
+        grid.addWidget(_lbl("Conserver les"), 4, 0)
+        grid.addWidget(self._keep_spin, 4, 1)
 
-        hour_row = QHBoxLayout()
-        hour_row.addWidget(QLabel("Heure de sauvegarde automatique :"))
         self._hour_spin = QSpinBox()
         self._hour_spin.setRange(0, 23)
         self._hour_spin.setValue(self._config.get("hour", 20))
         self._hour_spin.setSuffix("h00")
+        self._hour_spin.setMinimumHeight(36)
         self._hour_spin.setFixedWidth(90)
         self._hour_spin.valueChanged.connect(self._save_config)
-        hour_row.addWidget(self._hour_spin)
-        hour_row.addStretch()
-        layout.addLayout(hour_row)
+        grid.addWidget(_lbl("Heure auto"), 5, 0)
+        grid.addWidget(self._hour_spin, 5, 1)
+
+        layout.addLayout(grid)
 
         # Test + statut
         test_row = QHBoxLayout()

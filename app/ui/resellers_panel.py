@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -153,15 +152,29 @@ class _ResellerDialog(FramelessDialog):
         self._error_label.setObjectName("ErrorLabel")
         layout.addWidget(self._error_label)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("✕  Annuler")
+        cancel_btn.setObjectName("SecondaryButton")
+        cancel_btn.setFixedHeight(38)
+        cancel_btn.setMinimumWidth(110)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton("💾  Enregistrer")
+        save_btn.setFixedHeight(38)
+        save_btn.setMinimumWidth(140)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #2563eb; color: white; border: none;"
+            " border-radius: 6px; font-weight: 700; font-size: 13px; padding: 0 18px; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
         )
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText("Enregistrer")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("SecondaryButton")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        save_btn.clicked.connect(self._on_accept)
+        btn_row.addWidget(save_btn)
+
+        layout.addLayout(btn_row)
 
     def _on_accept(self) -> None:
         name = self._name_input.text().strip()

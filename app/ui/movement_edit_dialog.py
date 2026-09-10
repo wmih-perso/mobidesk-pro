@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -194,15 +193,34 @@ class MovementEditDialog(FramelessDialog):
         self._error_label.setWordWrap(True)
         layout.addWidget(self._error_label)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("✕  Annuler")
+        cancel_btn.setFixedHeight(38)
+        cancel_btn.setMinimumWidth(110)
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #ffffff; color: #424242; border: 1px solid #bdbdbd;"
+            " border-radius: 6px; font-weight: 600; padding: 0 14px; }"
+            "QPushButton:hover { background: #f5f5f5; border-color: #9e9e9e; }"
         )
-        btns.button(QDialogButtonBox.StandardButton.Save).setText("Enregistrer")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("SecondaryButton")
-        btns.accepted.connect(self._on_save)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton("💾  Enregistrer")
+        save_btn.setFixedHeight(38)
+        save_btn.setMinimumWidth(140)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #2563eb; color: white; border: none;"
+            " border-radius: 6px; font-weight: 700; font-size: 13px; padding: 0 18px; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
+        )
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+
+        layout.addLayout(btn_row)
 
         # Pré-remplir avec les lignes d'origine
         for display_id, label, qty, price_cents in self._initial_lines:

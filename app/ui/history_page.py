@@ -94,7 +94,7 @@ class _ReturnQtyDialog(FramelessDialog):
 
     def __init__(self, max_qty: int, product_name: str, parent=None) -> None:
         super().__init__(parent)
-        self.setFixedSize(360, 220)
+        self.setMinimumSize(340, 200)
         self.setModal(True)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -122,8 +122,13 @@ class _ReturnQtyDialog(FramelessDialog):
         layout.addWidget(hint)
 
         btn_row = QHBoxLayout()
-        cancel = QPushButton("Annuler")
-        cancel.setObjectName("SecondaryButton")
+        cancel = QPushButton("✕  Annuler")
+        cancel.setFixedHeight(36)
+        cancel.setStyleSheet(
+            "QPushButton { background: #ffffff; color: #424242; border: 1px solid #bdbdbd;"
+            " border-radius: 6px; font-weight: 600; padding: 0 14px; }"
+            "QPushButton:hover { background: #f5f5f5; border-color: #9e9e9e; }"
+        )
         cancel.clicked.connect(self.reject)
         btn_row.addWidget(cancel)
         btn_row.addStretch()
@@ -403,7 +408,7 @@ class MovementDetailDialog(FramelessDialog):
     def __init__(self, row_data: dict, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Détail du mouvement")
-        self.setFixedSize(480, 340)
+        self.setMinimumSize(460, 320)
         self.setModal(True)
         self._row = row_data
         self._build_ui(row_data)
