@@ -55,7 +55,7 @@ class RepairDialog(FramelessDialog):
         root.setSpacing(0)
         root.addWidget(self._make_header(
             title,
-            gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #00897b)",
+            gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1565c0,stop:1 #1d4ed8)",
         ))
 
         body = QWidget()

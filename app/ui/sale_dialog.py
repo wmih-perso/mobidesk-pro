@@ -233,9 +233,9 @@ class SaleDialog(FramelessDialog):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Référence, modèle, catégorie...")
         self.search_input.setStyleSheet(
-            "QLineEdit { background: white; border: 2px solid #00897b; border-radius: 6px; "
+            "QLineEdit { background: white; border: 2px solid #2563eb; border-radius: 6px; "
             "padding: 8px 14px; font-size: 13px; }"
-            "QLineEdit:focus { border: 2px solid #00695c; }"
+            "QLineEdit:focus { border: 2px solid #1e40af; }"
         )
         self.search_input.textChanged.connect(self._on_search_changed)
         self.search_input.returnPressed.connect(self._on_add_clicked)
@@ -243,9 +243,9 @@ class SaleDialog(FramelessDialog):
 
         add_btn = QPushButton("+ Ajouter Produit")
         add_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 9px 16px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #00796b; }"
+            "QPushButton:hover { background: #1d4ed8; }"
         )
         add_btn.clicked.connect(self._on_add_clicked)
         search_row.addWidget(add_btn)
@@ -259,8 +259,8 @@ class SaleDialog(FramelessDialog):
             "QListWidget { background: white; border: 1px solid #e0e0e0; border-radius: 6px; "
             "font-size: 13px; outline: none; }"
             "QListWidget::item { padding: 8px 14px; border-bottom: 1px solid #f5f5f5; }"
-            "QListWidget::item:selected { background: #e0f2f1; color: #00695c; }"
-            "QListWidget::item:hover { background: #f0faf9; }"
+            "QListWidget::item:selected { background: #eff6ff; color: #1e40af; }"
+            "QListWidget::item:hover { background: #f8faff; }"
         )
         self.search_results.itemClicked.connect(self._on_result_clicked)
         body_layout.addWidget(self.search_results)
@@ -273,12 +273,12 @@ class SaleDialog(FramelessDialog):
         self.lines_table.setStyleSheet(
             "QTableWidget { background: white; border: 1px solid #e0e0e0; border-radius: 8px; "
             "gridline-color: #f0f0f0; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
             "QTableWidget::item { padding: 4px 8px; border: none; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
-            "QTableWidget::item:hover { background: #e0f2f1; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
+            "QTableWidget::item:hover { background: #eff6ff; }"
         )
         tbl_header = self.lines_table.horizontalHeader()
         tbl_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -318,7 +318,7 @@ class SaleDialog(FramelessDialog):
         # ── BARRE DE PIED ──────────────────────────────────────────────
         footer = QFrame()
         footer.setStyleSheet(
-            "QFrame { background: #1a1a2e; border-top: 2px solid #00897b; }"
+            "QFrame { background: #1a1a2e; border-top: 2px solid #2563eb; }"
         )
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(16, 10, 16, 10)
@@ -339,7 +339,7 @@ class SaleDialog(FramelessDialog):
         self.versement_spin.setFixedWidth(180)
         self.versement_spin.setStyleSheet(
             "QDoubleSpinBox { background: #1e293b; color: #00e676; "
-            "border: 2px solid #00897b; border-radius: 6px; "
+            "border: 2px solid #2563eb; border-radius: 6px; "
             "padding: 5px 10px; font-size: 14px; font-weight: 700; }"
             "QDoubleSpinBox:focus { border: 2px solid #00e676; }"
         )
@@ -379,7 +379,7 @@ class SaleDialog(FramelessDialog):
         self.count_label.setStyleSheet("color: #9ca3af; font-size: 12px;")
         btn_hl.addWidget(self.count_label)
         btn_hl.addSpacing(16)
-        self.confirm_btn = self._action_btn("✔  Valider la vente", "#00897b", "#00695c")
+        self.confirm_btn = self._action_btn("✔  Valider la vente", "#2563eb", "#1e40af")
         self.confirm_btn.setMinimumWidth(180)
         self.confirm_btn.clicked.connect(self._on_save)
         btn_hl.addWidget(self.confirm_btn)
@@ -400,9 +400,9 @@ class SaleDialog(FramelessDialog):
     def _style_toggle(self, btn: QPushButton, active: bool) -> None:
         if active:
             btn.setStyleSheet(
-                "QPushButton { background: #00897b; color: white; border: none; border-radius: 5px; "
+                "QPushButton { background: #2563eb; color: white; border: none; border-radius: 5px; "
                 "padding: 6px 14px; font-weight: 700; font-size: 12px; }"
-                "QPushButton:hover { background: #00796b; }"
+                "QPushButton:hover { background: #1d4ed8; }"
             )
         else:
             btn.setStyleSheet(

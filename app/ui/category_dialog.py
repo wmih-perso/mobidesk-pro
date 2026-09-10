@@ -56,7 +56,7 @@ class CategoryDialog(FramelessDialog):
         self.name_input.setStyleSheet(
             "QLineEdit { border: 1px solid #d1d5db; border-radius: 6px;"
             " padding: 7px 10px; font-size: 13px; }"
-            "QLineEdit:focus { border-color: #0097a7; }"
+            "QLineEdit:focus { border-color: #2563eb; }"
         )
         self.name_input.returnPressed.connect(self._on_save)
         body_layout.addWidget(self.name_input)

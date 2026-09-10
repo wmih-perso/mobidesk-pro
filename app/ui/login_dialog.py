@@ -85,10 +85,10 @@ class LoginDialog(FramelessDialog):
         login_btn.setFixedHeight(48)
         login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         login_btn.setStyleSheet(
-            "QPushButton { background: #009688; color: white; border: none;"
+            "QPushButton { background: #2563eb; color: white; border: none;"
             " border-radius: 10px; font-weight: 700; font-size: 14px; }"
-            "QPushButton:hover { background: #00796b; }"
-            "QPushButton:pressed { background: #00695c; }"
+            "QPushButton:hover { background: #1d4ed8; }"
+            "QPushButton:pressed { background: #1e40af; }"
         )
         login_btn.clicked.connect(self._on_login)
         layout.addWidget(login_btn)

@@ -124,9 +124,9 @@ class _UserDialog(FramelessDialog):
 
         save = QPushButton("💾  Enregistrer")
         save.setStyleSheet(
-            "QPushButton { background: #009688; color: white; border: none;"
+            "QPushButton { background: #2563eb; color: white; border: none;"
             " border-radius: 6px; padding: 9px 20px; font-weight: 700; }"
-            "QPushButton:hover { background: #00796b; }"
+            "QPushButton:hover { background: #1d4ed8; }"
         )
         save.clicked.connect(self._on_save)
         btn_row.addWidget(save)

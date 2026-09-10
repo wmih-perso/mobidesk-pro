@@ -197,7 +197,7 @@ class DisplayDialog(FramelessDialog):
         self.notes_input.setStyleSheet(
             "QTextEdit { border: 1px solid #d1d5db; border-radius: 6px;"
             " padding: 6px; font-size: 13px; background: white; }"
-            "QTextEdit:focus { border-color: #0097a7; }"
+            "QTextEdit:focus { border-color: #2563eb; }"
         )
         grid.addWidget(self.notes_input, row, 0, 1, 3)
 
@@ -251,10 +251,10 @@ class DisplayDialog(FramelessDialog):
             stay_btn.setMinimumWidth(220)
             stay_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             stay_btn.setStyleSheet(
-                "QPushButton { background: #0097a7; color: white; border: none;"
+                "QPushButton { background: #2563eb; color: white; border: none;"
                 " border-radius: 10px; font-weight: 700; font-size: 14px; padding: 0 20px; }"
-                "QPushButton:hover { background: #00838f; }"
-                "QPushButton:pressed { background: #006064; }"
+                "QPushButton:hover { background: #1d4ed8; }"
+                "QPushButton:pressed { background: #1e40af; }"
             )
             stay_btn.clicked.connect(self._on_save_and_stay)
             layout.addWidget(stay_btn)
@@ -282,7 +282,7 @@ class DisplayDialog(FramelessDialog):
         widget.setStyleSheet(
             "QLineEdit { border: 1px solid #d1d5db; border-radius: 6px;"
             " padding: 7px 10px; font-size: 13px; background: white; }"
-            "QLineEdit:focus { border-color: #0097a7; }"
+            "QLineEdit:focus { border-color: #2563eb; }"
         )
         widget.setMinimumHeight(36)
 
@@ -290,7 +290,7 @@ class DisplayDialog(FramelessDialog):
         widget.setStyleSheet(
             "QComboBox { border: 1px solid #d1d5db; border-radius: 6px;"
             " padding: 6px 10px; font-size: 13px; background: white; min-height: 36px; }"
-            "QComboBox:focus { border-color: #0097a7; }"
+            "QComboBox:focus { border-color: #2563eb; }"
             "QComboBox::drop-down { border: none; width: 20px; }"
         )
 

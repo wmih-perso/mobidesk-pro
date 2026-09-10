@@ -234,7 +234,7 @@ class MainWindow(QMainWindow):
         buttons = [
             ("monitor",   "Stock",         "#7b1fa2", "stock"),
             ("list",      "Historique",    "#f57c00", "historique"),
-            ("coin",      "Bénéfices",     "#00897b", "profit"),
+            ("coin",      "Bénéfices",     "#2563eb", "profit"),
             ("home",      "Vente comptoir","#43a047", "sale"),
             ("users",     "Clients",       "#1976d2", "resellers"),
             ("download",  "Fournisseurs",  "#e64a19", "suppliers"),
@@ -646,15 +646,15 @@ class MainWindow(QMainWindow):
     def _pill_style(self, active: bool) -> str:
         if active:
             return (
-                "QPushButton { background:#00897b; color:white; border:none; border-radius:14px;"
+                "QPushButton { background:#2563eb; color:white; border:none; border-radius:14px;"
                 " padding:4px 14px; font-size:12px; font-weight:700; }"
-                "QPushButton:hover { background:#00796b; }"
+                "QPushButton:hover { background:#1d4ed8; }"
             )
         return (
             "QPushButton { background:#f5f5f5; color:#757575; border:1px solid #e0e0e0;"
             " border-radius:14px; padding:4px 14px; font-size:12px; font-weight:600; }"
-            "QPushButton:hover { background:#e0f2f1; color:#00695c; }"
-            "QPushButton:checked { background:#00897b; color:white; border:none; }"
+            "QPushButton:hover { background:#eff6ff; color:#1e40af; }"
+            "QPushButton:checked { background:#2563eb; color:white; border:none; }"
         )
 
     def _on_movement_filter(self, filter_key: str) -> None:

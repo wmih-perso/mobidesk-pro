@@ -181,9 +181,9 @@ class _BaseStockBatchDialog(FramelessDialog):
         save_btn = QPushButton("✔  Valider")
         save_btn.setFixedHeight(40)
         save_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px;"
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px;"
             " padding: 10px 18px; font-weight: 700; font-size: 13px; }"
-            " QPushButton:hover { background: #00796b; }"
+            " QPushButton:hover { background: #1d4ed8; }"
         )
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)

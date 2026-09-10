@@ -98,10 +98,10 @@ class PaymentDialog(FramelessDialog):
             "  border-radius: 9px;"
             "  background: #0f172a;"
             "}"
-            "QRadioButton::indicator:hover { border-color: #00897b; }"
+            "QRadioButton::indicator:hover { border-color: #2563eb; }"
             "QRadioButton::indicator:checked {"
-            "  background: #00897b;"
-            "  border: 2px solid #00897b;"
+            "  background: #2563eb;"
+            "  border: 2px solid #2563eb;"
             "}"
         )
         body.setObjectName("PayBody")
@@ -194,7 +194,7 @@ class PaymentDialog(FramelessDialog):
         self._vers_spin.setValue(cents_to_da(total_net_cents))
         self._vers_spin.setStyleSheet(
             "QDoubleSpinBox { background: #1e293b; color: #00e676; "
-            "border: 2px solid #00897b; border-radius: 6px; "
+            "border: 2px solid #2563eb; border-radius: 6px; "
             "padding: 5px 10px; font-size: 14px; font-weight: 700; }"
             "QDoubleSpinBox:focus { border: 2px solid #00e676; }"
         )
@@ -239,9 +239,9 @@ class PaymentDialog(FramelessDialog):
         btn_row.addStretch()
         self._confirm_btn = QPushButton("✔  Confirmer la vente")
         self._confirm_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 10px 24px; font-weight: 800; font-size: 14px; }"
-            "QPushButton:hover { background: #00695c; }"
+            "QPushButton:hover { background: #1e40af; }"
         )
         self._confirm_btn.clicked.connect(self._on_confirm)
         btn_row.addWidget(self._confirm_btn)
@@ -467,18 +467,18 @@ class SalePage(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Référence, modèle, catégorie...")
         self.search_input.setStyleSheet(
-            "QLineEdit { background: white; border: 2px solid #00897b; border-radius: 6px; "
+            "QLineEdit { background: white; border: 2px solid #2563eb; border-radius: 6px; "
             "padding: 8px 14px; font-size: 13px; }"
-            "QLineEdit:focus { border: 2px solid #00695c; }"
+            "QLineEdit:focus { border: 2px solid #1e40af; }"
         )
         self.search_input.textChanged.connect(self._on_search_changed)
         self.search_input.returnPressed.connect(self._on_add_clicked)
         search_row.addWidget(self.search_input, stretch=1)
         add_btn = QPushButton("+ Ajouter Produit")
         add_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 9px 16px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #00796b; }"
+            "QPushButton:hover { background: #1d4ed8; }"
         )
         add_btn.clicked.connect(self._on_add_clicked)
         search_row.addWidget(add_btn)
@@ -492,8 +492,8 @@ class SalePage(QWidget):
             "QListWidget { background: white; border: 1px solid #e0e0e0; border-radius: 6px; "
             "font-size: 13px; outline: none; }"
             "QListWidget::item { padding: 8px 14px; border-bottom: 1px solid #f5f5f5; }"
-            "QListWidget::item:selected { background: #e0f2f1; color: #00695c; }"
-            "QListWidget::item:hover { background: #f0faf9; }"
+            "QListWidget::item:selected { background: #eff6ff; color: #1e40af; }"
+            "QListWidget::item:hover { background: #f8faff; }"
         )
         self.search_results.itemClicked.connect(self._on_result_clicked)
         bl.addWidget(self.search_results)
@@ -506,12 +506,12 @@ class SalePage(QWidget):
         self.lines_table.setStyleSheet(
             "QTableWidget { background: white; border: 1px solid #e0e0e0; border-radius: 8px; "
             "gridline-color: #f0f0f0; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
             "QTableWidget::item { padding: 4px 8px; border: none; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
-            "QTableWidget::item:hover { background: #e0f2f1; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
+            "QTableWidget::item:hover { background: #eff6ff; }"
         )
         hdr = self.lines_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Référence
@@ -543,7 +543,7 @@ class SalePage(QWidget):
 
         # ── FOOTER ────────────────────────────────────────────────────
         footer = QFrame()
-        footer.setStyleSheet("QFrame { background: #1a1a2e; border-top: 2px solid #00897b; }")
+        footer.setStyleSheet("QFrame { background: #1a1a2e; border-top: 2px solid #2563eb; }")
         fl = QHBoxLayout(footer)
         fl.setContentsMargins(20, 12, 20, 12)
         fl.setSpacing(10)
@@ -586,9 +586,9 @@ class SalePage(QWidget):
     def _style_toggle(self, btn: QPushButton, active: bool) -> None:
         if active:
             btn.setStyleSheet(
-                "QPushButton { background: #00897b; color: white; border: none; border-radius: 5px; "
+                "QPushButton { background: #2563eb; color: white; border: none; border-radius: 5px; "
                 "padding: 8px 18px; font-weight: 700; font-size: 14px; }"
-                "QPushButton:hover { background: #00796b; }"
+                "QPushButton:hover { background: #1d4ed8; }"
             )
         else:
             btn.setStyleSheet(

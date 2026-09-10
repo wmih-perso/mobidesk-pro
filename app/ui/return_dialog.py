@@ -98,15 +98,15 @@ class ReturnDialog(FramelessDialog):
         self.product_list.setStyleSheet(
             "QListWidget { border: 1px solid #e0e0e0; border-radius: 6px; font-size: 13px; }"
             "QListWidget::item { padding: 7px 12px; border-bottom: 1px solid #f5f5f5; }"
-            "QListWidget::item:selected { background: #e0f2f1; color: #00695c; }"
+            "QListWidget::item:selected { background: #e0f2f1; color: #1e40af; }"
         )
         self.product_list.itemClicked.connect(self._on_product_selected)
         layout.addWidget(self.product_list)
 
         self.selected_product_lbl = QLabel("Aucun produit sélectionné")
         self.selected_product_lbl.setStyleSheet(
-            "background: #f0faf9; border: 1px solid #80cbc4; border-radius: 6px; "
-            "padding: 8px 12px; color: #00695c; font-weight: 600; font-size: 12px;"
+            "background: #f8faff; border: 1px solid #bfdbfe; border-radius: 6px; "
+            "padding: 8px 12px; color: #1e40af; font-weight: 600; font-size: 12px;"
         )
         layout.addWidget(self.selected_product_lbl)
 
@@ -154,9 +154,9 @@ class ReturnDialog(FramelessDialog):
 
         self.confirm_btn = QPushButton("✔  Confirmer le retour")
         self.confirm_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 10px 20px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #00695c; }"
+            "QPushButton:hover { background: #1e40af; }"
         )
         self.confirm_btn.clicked.connect(self._on_confirm)
         f_layout.addWidget(self.confirm_btn)
@@ -171,15 +171,15 @@ class ReturnDialog(FramelessDialog):
     def _style_type_btn(self, btn: QPushButton, active: bool) -> None:
         if active:
             btn.setStyleSheet(
-                "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+                "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
                 "padding: 10px 14px; font-weight: 700; font-size: 13px; }"
-                "QPushButton:hover { background: #00796b; }"
+                "QPushButton:hover { background: #1d4ed8; }"
             )
         else:
             btn.setStyleSheet(
                 "QPushButton { background: #f5f5f5; color: #616161; border: 1px solid #e0e0e0; "
                 "border-radius: 6px; padding: 10px 14px; font-weight: 600; font-size: 13px; }"
-                "QPushButton:hover { background: #e0f2f1; color: #00695c; }"
+                "QPushButton:hover { background: #e0f2f1; color: #1e40af; }"
             )
 
     def _set_type(self, t: str) -> None:

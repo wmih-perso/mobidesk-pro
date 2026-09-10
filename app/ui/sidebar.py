@@ -34,7 +34,7 @@ def _make_logo_badge(size: int = 36) -> QPixmap:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#009688"))
+    painter.setBrush(QColor("#2563eb"))
     painter.drawEllipse(0, 0, size, size)
     painter.setPen(QColor("#ffffff"))
     from PySide6.QtGui import QFont

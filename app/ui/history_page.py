@@ -52,7 +52,7 @@ class _ModernCombo(QComboBox):
                          self.currentText())
 
         # Flèche ▾
-        painter.setPen(QColor("#00897b"))
+        painter.setPen(QColor("#2563eb"))
         arrow_font = QFont("Segoe UI", 11)
         painter.setFont(arrow_font)
         arrow_rect = rect.adjusted(rect.width() - 26, 0, 0, 0)
@@ -129,9 +129,9 @@ class _ReturnQtyDialog(FramelessDialog):
         btn_row.addStretch()
         ok = QPushButton("Confirmer")
         ok.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 8px 18px; font-weight: 700; }"
-            "QPushButton:hover { background: #00796b; }"
+            "QPushButton:hover { background: #1d4ed8; }"
         )
         ok.clicked.connect(self.accept)
         btn_row.addWidget(ok)
@@ -198,10 +198,10 @@ class SaleBatchDetailDialog(FramelessDialog):
         table.setFrameShape(QFrame.Shape.NoFrame)
         table.setStyleSheet(
             "QTableWidget { background: white; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
         )
         hdr = table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -276,7 +276,7 @@ class SaleBatchDetailDialog(FramelessDialog):
         f_layout = QHBoxLayout(footer)
         f_layout.setContentsMargins(20, 10, 20, 10)
         self._total_label = QLabel("")
-        self._total_label.setStyleSheet("font-weight: 800; font-size: 15px; color: #00897b;")
+        self._total_label.setStyleSheet("font-weight: 800; font-size: 15px; color: #2563eb;")
         f_layout.addStretch()
         f_layout.addWidget(QLabel("Total :  "))
         f_layout.addWidget(self._total_label)
@@ -331,7 +331,7 @@ class SaleBatchDetailDialog(FramelessDialog):
         if not rets:
             self._returns_section.setVisible(False)
             self._total_label.setText(format_da(total))
-            self._total_label.setStyleSheet("font-weight: 800; font-size: 15px; color: #00897b;")
+            self._total_label.setStyleSheet("font-weight: 800; font-size: 15px; color: #2563eb;")
             return
 
         # montant retourné = qty × prix de vente d'origine
@@ -567,7 +567,7 @@ class _FilterBar(QWidget):
         self.search.setStyleSheet(
             "QLineEdit { background: white; border: 1px solid #bdbdbd; border-radius: 6px; "
             "padding: 7px 12px; font-size: 13px; }"
-            "QLineEdit:focus { border: 2px solid #00897b; }"
+            "QLineEdit:focus { border: 2px solid #2563eb; }"
         )
         self.search.setMinimumWidth(220)
         layout.addWidget(self.search)
@@ -658,12 +658,12 @@ class _SalesTab(QWidget):
         self._table.setFrameShape(QFrame.Shape.NoFrame)
         self._table.setStyleSheet(
             "QTableWidget { background: white; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
             "QTableWidget::item { padding: 4px 10px; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
-            "QTableWidget::item:hover { background: #e0f2f1; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
+            "QTableWidget::item:hover { background: #eff6ff; }"
         )
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -706,7 +706,7 @@ class _SalesTab(QWidget):
         total_ca = 0
         for i, b in enumerate(self._data):
             mode = "Gros" if b["sale_type"] == "wholesale" else "Détail"
-            mode_color = "#1976d2" if b["sale_type"] == "wholesale" else "#00897b"
+            mode_color = "#1976d2" if b["sale_type"] == "wholesale" else "#2563eb"
 
             self._table.setItem(i, 0, QTableWidgetItem(_fmt_date(b["date"])))
 
@@ -814,12 +814,12 @@ class _MovementsTab(QWidget):
         self._table.setFrameShape(QFrame.Shape.NoFrame)
         self._table.setStyleSheet(
             "QTableWidget { background: white; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
             "QTableWidget::item { padding: 4px 8px; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
-            "QTableWidget::item:hover { background: #e0f2f1; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
+            "QTableWidget::item:hover { background: #eff6ff; }"
         )
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -1117,9 +1117,9 @@ class _SupplierResolutionDialog(FramelessDialog):
         fl.addStretch()
         self._confirm = QPushButton("✔  Confirmer")
         self._confirm.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 10px 20px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #00695c; }"
+            "QPushButton:hover { background: #1e40af; }"
         )
         self._confirm.clicked.connect(self._on_confirm)
         fl.addWidget(self._confirm)
@@ -1137,14 +1137,14 @@ class _SupplierResolutionDialog(FramelessDialog):
         ]:
             if active:
                 btn.setStyleSheet(
-                    "QPushButton { background: #00897b; color: white; border: none; "
+                    "QPushButton { background: #2563eb; color: white; border: none; "
                     "border-radius: 6px; padding: 9px 12px; font-weight: 700; font-size: 12px; }"
                 )
             else:
                 btn.setStyleSheet(
                     "QPushButton { background: #f5f5f5; color: #616161; border: 1px solid #e0e0e0; "
                     "border-radius: 6px; padding: 9px 12px; font-weight: 600; font-size: 12px; }"
-                    "QPushButton:hover { background: #e0f2f1; color: #00695c; }"
+                    "QPushButton:hover { background: #eff6ff; color: #1e40af; }"
                 )
 
     def _set_mode(self, mode: str) -> None:
@@ -1206,9 +1206,9 @@ class _ReturnsTab(QWidget):
         btn_row = QHBoxLayout()
         new_return_btn = QPushButton("↩  Déclarer un retour")
         new_return_btn.setStyleSheet(
-            "QPushButton { background: #00897b; color: white; border: none; border-radius: 6px; "
+            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
             "padding: 9px 18px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #00796b; }"
+            "QPushButton:hover { background: #1d4ed8; }"
         )
         new_return_btn.clicked.connect(self._on_new_return)
         btn_row.addWidget(new_return_btn)
@@ -1248,12 +1248,12 @@ class _ReturnsTab(QWidget):
         self._table.setFrameShape(QFrame.Shape.NoFrame)
         self._table.setStyleSheet(
             "QTableWidget { background: white; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #00897b; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #00796b; font-size: 12px; }"
+            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
+            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
             "QHeaderView::section:last { border-right: none; }"
             "QTableWidget::item { padding: 4px 10px; }"
-            "QTableWidget::item:selected { background: #b2dfdb; color: #212121; }"
-            "QTableWidget::item:hover { background: #e0f2f1; }"
+            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
+            "QTableWidget::item:hover { background: #eff6ff; }"
         )
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -1304,9 +1304,12 @@ class _ReturnsTab(QWidget):
                            m.supplier.name if m.supplier else "")
                 note = m.reason.split(" — ", 1)[1] if " — " in m.reason else ""
                 is_supplier_return = not is_received
+                # movement_batch_id peut être None pour un retour simple ;
+                # on utilise m.id comme identifiant stable dans ce cas.
+                return_id = m.movement_batch_id or m.id
                 replaced = (
-                    has_replacement(session, m.movement_batch_id)
-                    if is_supplier_return and m.movement_batch_id else False
+                    has_replacement(session, return_id)
+                    if is_supplier_return else False
                 )
                 rows.append({
                     "date": _fmt_date(m.created_at),
@@ -1320,7 +1323,7 @@ class _ReturnsTab(QWidget):
                     "note": note,
                     "display_id": m.display_id,
                     "supplier_id": m.supplier_id,
-                    "batch_id": m.movement_batch_id,
+                    "batch_id": return_id,
                     "is_supplier_return": is_supplier_return,
                     "replaced": replaced,
                 })
@@ -1408,8 +1411,8 @@ class HistoriquePage(QWidget):
             "QTabWidget::pane { border: none; background: #f5f5f5; }"
             "QTabBar::tab { background: #eeeeee; color: #616161; border: 1px solid #e0e0e0; "
             "border-bottom: none; padding: 10px 22px; border-radius: 6px 6px 0 0; font-weight: 600; margin-right: 2px; }"
-            "QTabBar::tab:hover { background: #e0f2f1; color: #00695c; }"
-            "QTabBar::tab:selected { background: #00897b; color: white; border-color: #00897b; }"
+            "QTabBar::tab:hover { background: #eff6ff; color: #1e40af; }"
+            "QTabBar::tab:selected { background: #2563eb; color: white; border-color: #2563eb; }"
         )
 
         self._sales_tab = _SalesTab()
