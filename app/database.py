@@ -180,6 +180,41 @@ def _migrate_repairs_schema(engine) -> None:
         connection.commit()
 
 
+def _migrate_categories_schema(engine) -> None:
+    """Ajoute la colonne `color` aux catégories si absente, puis donne une
+    couleur de la palette à chaque catégorie qui n'en a pas encore (dans
+    l'ordre de création). Idempotente : une couleur déjà choisie n'est
+    jamais modifiée."""
+    from app.services import CATEGORY_PALETTE
+
+    with engine.connect() as connection:
+        existing = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(categories)").fetchall()
+        }
+        if "color" not in existing:
+            connection.exec_driver_sql(
+                "ALTER TABLE categories ADD COLUMN color VARCHAR(7) NOT NULL DEFAULT ''"
+            )
+
+        used = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT color FROM categories WHERE color != ''"
+            ).fetchall()
+        }
+        uncolored = connection.exec_driver_sql(
+            "SELECT id FROM categories WHERE color = '' ORDER BY id"
+        ).fetchall()
+        free = [color for color in CATEGORY_PALETTE if color not in used]
+        for index, (category_id,) in enumerate(uncolored):
+            color = free[index] if index < len(free) else CATEGORY_PALETTE[index % len(CATEGORY_PALETTE)]
+            connection.exec_driver_sql(
+                "UPDATE categories SET color = ? WHERE id = ?", (color, category_id)
+            )
+        connection.commit()
+
+
 _DEFAULT_CATEGORIES = ["Afficheur", "Batterie", "Autre"]
 
 
@@ -314,6 +349,7 @@ def init_engine(database_path: Path | str | None = None):
     _migrate_resellers_schema(_engine)
     _migrate_suppliers_schema(_engine)
     _seed_default_categories(_engine)
+    _migrate_categories_schema(_engine)
     _migrate_stock_batches_schema(_engine)
     _ensure_indexes(_engine)
     _seed_stock_batches(_engine)

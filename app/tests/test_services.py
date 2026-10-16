@@ -411,3 +411,39 @@ def test_delete_category_removes_it_from_the_list(db_session):
 
     names = [c.name for c in list_categories(db_session)]
     assert "Coque" not in names
+
+
+def test_create_category_assigns_first_free_palette_color(db_session):
+    from app.services import CATEGORY_PALETTE
+
+    used = {c.color for c in list_categories(db_session)}
+    expected = next(color for color in CATEGORY_PALETTE if color not in used)
+
+    category = create_category(db_session, name="Coque")
+
+    assert category.color == expected
+
+
+def test_create_and_update_category_with_explicit_color(db_session):
+    category = create_category(db_session, name="Coque", color="#DB2777")
+    assert category.color == "#db2777"
+
+    update_category(db_session, category.id, name="Coque", color="#16a34a")
+    assert category.color == "#16a34a"
+
+    # Sans couleur, la modification garde la couleur actuelle.
+    update_category(db_session, category.id, name="Coques")
+    assert category.color == "#16a34a"
+
+
+def test_category_rejects_invalid_color(db_session):
+    with pytest.raises(StockError):
+        create_category(db_session, name="Coque", color="rouge")
+
+
+def test_category_colors_maps_names(db_session):
+    from app.services import category_colors
+
+    create_category(db_session, name="Coque", color="#7c3aed")
+
+    assert category_colors(db_session)["Coque"] == "#7c3aed"

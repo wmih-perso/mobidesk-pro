@@ -31,7 +31,7 @@ QLabel, QCheckBox, QRadioButton {
 
 #NavBrand {
     color: #ffffff;
-    font-size: 15px;
+    font-size: 18px;
     font-weight: 700;
     padding: 0 10px;
     border: none;
@@ -42,11 +42,11 @@ QPushButton#NavButton {
     color: #ffffff;
     border: none;
     border-bottom: 3px solid transparent;
-    padding: 0 14px;
+    padding: 0 10px;
     border-radius: 0;
     font-weight: 600;
-    font-size: 13px;
-    min-height: 53px;
+    font-size: 15px;
+    min-height: 57px;
     min-width: 60px;
 }
 
@@ -67,9 +67,9 @@ QPushButton#NavSaleButton {
     color: #1e40af;
     border: none;
     border-radius: 20px;
-    padding: 7px 18px;
+    padding: 7px 14px;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 15px;
     min-height: 0;
     margin: 10px 4px;
 }
@@ -89,9 +89,9 @@ QPushButton#NavAddButton {
     color: #ffffff;
     border: 2px solid rgba(255,255,255,0.6);
     border-radius: 20px;
-    padding: 7px 18px;
+    padding: 7px 14px;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 15px;
     min-height: 0;
     margin: 10px 4px;
 }
@@ -112,7 +112,7 @@ QPushButton#NavQuitButton {
     border-radius: 6px;
     padding: 8px 16px;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 15px;
     min-height: 0;
     margin: 10px 4px;
 }
@@ -127,8 +127,8 @@ QPushButton#NavQuitButton:hover {
 QLabel#NavBadge {
     background-color: #ef4444;
     color: #ffffff;
-    border-radius: 9px;
-    font-size: 10px;
+    border-radius: 10px;
+    font-size: 12px;
     font-weight: 700;
     padding: 1px 5px;
     border: none;

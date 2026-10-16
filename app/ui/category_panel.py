@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.services import list_categories
 from app.ui.category_dialog import CategoryDialog
-from app.ui.widgets import EmptyState
+from app.ui.widgets import EmptyState, color_dot_icon
 
 CATEGORY_COLUMNS = ["Nom"]
 
@@ -96,14 +96,16 @@ class CategoryPanel(QWidget):
     def refresh(self) -> None:
         with session_scope() as session:
             categories = list_categories(session)
-            rows = [(c.id, c.name) for c in categories]
+            rows = [(c.id, c.name, c.color) for c in categories]
 
         has_rows = len(rows) > 0
         self.table.setVisible(has_rows)
         self.empty_state.setVisible(not has_rows)
 
         self.table.setRowCount(len(rows))
-        for row_index, (category_id, name) in enumerate(rows):
+        for row_index, (category_id, name, color) in enumerate(rows):
             item = QTableWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, category_id)
+            if color:
+                item.setIcon(color_dot_icon(color))
             self.table.setItem(row_index, 0, item)

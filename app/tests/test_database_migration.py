@@ -458,3 +458,47 @@ def test_seed_default_categories_preserves_user_customizations(tmp_path):
     assert names == {"Coque"}
 
 
+
+
+def test_migrate_categories_schema_adds_color_and_backfills(tmp_path):
+    from app.database import _migrate_categories_schema
+    from app.services import CATEGORY_PALETTE
+
+    db_path = tmp_path / "categories_legacy.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    with engine.connect() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE categories (id INTEGER PRIMARY KEY, name VARCHAR(50) UNIQUE,"
+            " created_at DATETIME)"
+        )
+        for name in ("Afficheur", "Batterie", "Autre"):
+            connection.exec_driver_sql(
+                "INSERT INTO categories (name, created_at) VALUES (?, CURRENT_TIMESTAMP)",
+                (name,),
+            )
+        connection.commit()
+
+    _migrate_categories_schema(engine)
+    _migrate_categories_schema(engine)  # idempotente
+
+    with engine.connect() as connection:
+        colors = [
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT color FROM categories ORDER BY id"
+            ).fetchall()
+        ]
+    assert colors == CATEGORY_PALETTE[:3]
+
+
+def test_fresh_database_seeds_colored_categories(tmp_path):
+    from app.database import init_engine
+
+    engine = init_engine(tmp_path / "fresh.db")
+    with engine.connect() as connection:
+        colors = [
+            row[0]
+            for row in connection.exec_driver_sql("SELECT color FROM categories").fetchall()
+        ]
+    assert colors and all(color.startswith("#") for color in colors)
+    assert len(set(colors)) == len(colors)

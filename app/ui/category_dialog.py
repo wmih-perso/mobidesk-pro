@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -15,7 +16,14 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import session_scope
-from app.services import StockError, create_category, delete_category, get_category, update_category
+from app.services import (
+    CATEGORY_PALETTE,
+    StockError,
+    create_category,
+    delete_category,
+    get_category,
+    update_category,
+)
 from app.ui.frameless_dialog import FramelessDialog
 
 
@@ -60,6 +68,35 @@ class CategoryDialog(FramelessDialog):
         )
         self.name_input.returnPressed.connect(self._on_save)
         body_layout.addWidget(self.name_input)
+
+        body_layout.addSpacing(6)
+        color_lbl = QLabel("Couleur")
+        color_lbl.setStyleSheet("font-weight: 600; color: #374151; font-size: 13px;")
+        body_layout.addWidget(color_lbl)
+
+        # Pastilles de la palette — une seule cochée à la fois. Aucune n'est
+        # cochée pour une nouvelle catégorie : la première couleur libre
+        # est alors attribuée automatiquement (voir create_category).
+        swatches_row = QHBoxLayout()
+        swatches_row.setSpacing(8)
+        self._color_group = QButtonGroup(self)
+        self._color_group.setExclusive(True)
+        for color in CATEGORY_PALETTE:
+            swatch = QPushButton()
+            swatch.setCheckable(True)
+            swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+            swatch.setProperty("category_color", color)
+            swatch.setStyleSheet(
+                f"QPushButton {{ background: {color}; border: 2px solid white;"
+                " border-radius: 14px; padding: 0;"
+                " min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; }"
+                f"QPushButton:hover {{ border: 2px solid #cbd5e1; }}"
+                f"QPushButton:checked {{ border: 3px solid #0f172a; }}"
+            )
+            self._color_group.addButton(swatch)
+            swatches_row.addWidget(swatch)
+        swatches_row.addStretch()
+        body_layout.addLayout(swatches_row)
 
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(
@@ -114,15 +151,25 @@ class CategoryDialog(FramelessDialog):
         with session_scope() as session:
             category = get_category(session, category_id)
             self.name_input.setText(category.name)
+            current_color = category.color
+        for swatch in self._color_group.buttons():
+            if swatch.property("category_color") == current_color:
+                swatch.setChecked(True)
+                break
+
+    def _selected_color(self) -> str | None:
+        checked = self._color_group.checkedButton()
+        return checked.property("category_color") if checked is not None else None
 
     def _on_save(self) -> None:
         name = self.name_input.text()
         try:
             with session_scope() as session:
+                color = self._selected_color()
                 if self.category_id is None:
-                    create_category(session, name=name)
+                    create_category(session, name=name, color=color)
                 else:
-                    update_category(session, self.category_id, name=name)
+                    update_category(session, self.category_id, name=name, color=color)
         except StockError as error:
             self.error_label.setText(str(error))
             self.error_label.show()

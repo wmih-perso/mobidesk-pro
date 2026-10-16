@@ -56,7 +56,7 @@ class Sidebar(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("TopNav")
-        self.setFixedHeight(56)
+        self.setFixedHeight(60)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._buttons: dict[str, QPushButton] = {}
         self._button_group = QButtonGroup(self)
@@ -81,7 +81,7 @@ class Sidebar(QWidget):
         brand.setObjectName("NavBrand")
         layout.addWidget(brand)
 
-        layout.addSpacing(20)
+        layout.addSpacing(12)
 
         # Séparateur vertical
         sep = QFrame()
@@ -154,7 +154,7 @@ class Sidebar(QWidget):
         add_btn.clicked.connect(self.add_product_requested.emit)
         layout.addWidget(add_btn)
 
-        layout.addSpacing(28)
+        layout.addSpacing(12)
 
         # Séparateur
         sep3 = QFrame()
@@ -163,7 +163,7 @@ class Sidebar(QWidget):
         sep3.setFixedSize(1, 30)
         layout.addWidget(sep3)
 
-        layout.addSpacing(14)
+        layout.addSpacing(8)
 
         # Boutons fenêtre
         min_btn = QPushButton("—")

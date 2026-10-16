@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -37,6 +37,8 @@ from app.money import cents_to_da, format_da
 from app.paths import get_database_path, is_frozen
 from app.services import (
     StockError,
+    UNKNOWN_CATEGORY_COLOR,
+    category_colors,
     count_low_stock_displays,
     count_movements,
     deactivate_display,
@@ -44,6 +46,7 @@ from app.services import (
     list_movements,
 )
 from app.backup import is_configured, load_backup_config, upload_backup
+from app.display_config import SCALE_CHOICES, load_ui_scale, save_ui_scale
 from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel
 from app.ui.category_panel import CategoryPanel
@@ -59,7 +62,7 @@ from app.ui.sidebar import Sidebar
 from app.ui.stock_adjust_dialog import StockAdjustmentDialog, SupplierPurchaseDialog
 from app.ui.users_panel import UsersPanel
 from app.ui.updater_dialog import UpdaterDialog
-from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow
+from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow, category_badge
 from app.updater import (
     UpdateCheckError,
     UpdateInfo,
@@ -101,6 +104,15 @@ DISPLAY_COLUMNS = [
     "",
 ]
 
+# Colonnes « Prix vente » mises en couleur dans le tableau des produits :
+# index de colonne -> (couleur du texte, titre court avec pastille). Le
+# titre court ne sert qu'à l'écran ; l'export CSV garde DISPLAY_COLUMNS.
+CATEGORY_COLUMN = DISPLAY_COLUMNS.index("Catégorie")
+PRICE_COLUMN_STYLES = {
+    DISPLAY_COLUMNS.index("Prix vente (détail)"): ("#15803d", "🟢 Prix détail"),
+    DISPLAY_COLUMNS.index("Prix vente (gros)"): ("#1d4ed8", "🔵 Prix gros"),
+}
+
 MOVEMENT_COLUMNS = ["Date", "Pièce", "Mouvement", "Avant", "Après", "Motif", ""]
 
 MONTH_NAMES_FR = [
@@ -123,6 +135,7 @@ class MainWindow(QMainWindow):
         self._current_page = 1
         self._page_size = PAGE_SIZE_CHOICES[0]
         self._filtered_displays: list = []
+        self._category_colors: dict[str, str] = {}
         self._only_low_stock = False
 
         self._movements_current_page = 1
@@ -462,6 +475,10 @@ class MainWindow(QMainWindow):
 
         self.displays_table = QTableWidget(0, len(DISPLAY_COLUMNS))
         self.displays_table.setHorizontalHeaderLabels(DISPLAY_COLUMNS)
+        # Le QSS de l'en-tête écrase toute couleur posée par cellule : on
+        # repère les colonnes de prix par une pastille de leur couleur.
+        for column_index, (_color, title) in PRICE_COLUMN_STYLES.items():
+            self.displays_table.horizontalHeaderItem(column_index).setText(title)
         self.displays_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.displays_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.displays_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -752,6 +769,10 @@ class MainWindow(QMainWindow):
             line.setStyleSheet("color: #e5e7eb; background: #e5e7eb; max-height: 1px;")
             return line
 
+        card_layout.addWidget(self._build_display_section())
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_ticket_section())
         card_layout.addSpacing(20)
         card_layout.addWidget(_separator())
@@ -880,6 +901,69 @@ class MainWindow(QMainWindow):
         section_layout.addWidget(self.backup_panel)
 
         return section
+
+    def _build_display_section(self) -> QWidget:
+        section = QFrame()
+        lay = QVBoxLayout(section)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+
+        lbl = QLabel("🔠  Affichage")
+        lbl.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
+        lay.addWidget(lbl)
+
+        hint = QLabel(
+            "Agrandit tout l'écran : textes, barre de navigation, boutons et tableaux. "
+            "Le changement s'applique au redémarrage de l'application."
+        )
+        hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        size_label = QLabel("Taille du texte")
+        size_label.setFixedWidth(140)
+        size_label.setStyleSheet("color: #555; font-size: 13px;")
+        row.addWidget(size_label)
+
+        scale_combo = QComboBox()
+        scale_combo.setMinimumHeight(36)
+        scale_combo.setMinimumWidth(220)
+        current_scale = load_ui_scale()
+        for label, value in SCALE_CHOICES:
+            scale_combo.addItem(label, value)
+            if abs(value - current_scale) < 0.001:
+                scale_combo.setCurrentIndex(scale_combo.count() - 1)
+        row.addWidget(scale_combo)
+
+        restart_btn = QPushButton("🔄  Redémarrer maintenant")
+        restart_btn.setObjectName("SecondaryButton")
+        restart_btn.setFixedHeight(36)
+        restart_btn.setVisible(False)
+        restart_btn.clicked.connect(self._restart_application)
+        row.addWidget(restart_btn)
+        row.addStretch()
+        lay.addLayout(row)
+
+        def _on_scale_changed() -> None:
+            save_ui_scale(scale_combo.currentData())
+            restart_btn.setVisible(True)
+
+        scale_combo.currentIndexChanged.connect(_on_scale_changed)
+        return section
+
+    def _restart_application(self) -> None:
+        from PySide6.QtCore import QProcess
+
+        # Exe PyInstaller : sys.executable est l'exe lui-même ; en
+        # développement, c'est python et sys.argv[0] le script main.py.
+        arguments = sys.argv[1:] if is_frozen() else sys.argv
+        # Le zoom courant a été posé dans l'environnement au démarrage :
+        # on le retire pour que le nouveau processus relise le réglage.
+        os.environ.pop("QT_SCALE_FACTOR", None)
+        if QProcess.startDetached(sys.executable, arguments):
+            QApplication.quit()
 
     def _build_ticket_section(self) -> QWidget:
         from PySide6.QtWidgets import QLineEdit as _LE
@@ -1219,6 +1303,7 @@ class MainWindow(QMainWindow):
             total_count = len(all_active)
             low_stock_count = count_low_stock_displays(session)
             stock_value_cents = sum(d.purchase_price_cents * d.quantity for d in all_active)
+            self._category_colors = category_colors(session)
 
         total_qty = sum(d.quantity for d in all_active)
         self.total_card.set_value(str(total_count))
@@ -1280,8 +1365,16 @@ class MainWindow(QMainWindow):
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, d.id)
+                price_style = PRICE_COLUMN_STYLES.get(column_index)
+                if price_style is not None:
+                    color, _title = price_style
+                    item.setForeground(QBrush(QColor(color)))
+                    bold = QFont(item.font())
+                    bold.setBold(True)
+                    item.setFont(bold)
                 self.displays_table.setItem(row_index, column_index, item)
 
+            self._set_category_badge(row_index, d.id, d.category)
             self._set_alert_badge(row_index, d.id, d.is_low_stock)
             self._set_row_actions(row_index, d.id)
 
@@ -1297,6 +1390,21 @@ class MainWindow(QMainWindow):
         self.prev_page_button.setEnabled(self._current_page > 1)
         self.next_page_button.setEnabled(self._current_page < total_pages)
         self.last_page_button.setEnabled(self._current_page < total_pages)
+
+    def _set_category_badge(self, row_index: int, display_id: int, category: str) -> None:
+        # Le texte reste dans la cellule (vide visuellement) pour la
+        # sélection ; le badge coloré est posé par-dessus.
+        placeholder = QTableWidgetItem("")
+        placeholder.setData(Qt.ItemDataRole.UserRole, display_id)
+        placeholder.setToolTip(category)
+        self.displays_table.setItem(row_index, CATEGORY_COLUMN, placeholder)
+        if not category:
+            self.displays_table.removeCellWidget(row_index, CATEGORY_COLUMN)
+            return
+        color = self._category_colors.get(category, UNKNOWN_CATEGORY_COLOR)
+        self.displays_table.setCellWidget(
+            row_index, CATEGORY_COLUMN, category_badge(category, color)
+        )
 
     def _set_alert_badge(self, row_index: int, display_id: int, is_low_stock: bool) -> None:
         column_index = len(DISPLAY_COLUMNS) - 2

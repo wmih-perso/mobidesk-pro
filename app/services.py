@@ -1263,6 +1263,51 @@ def deactivate_supplier(session: Session, supplier_id: int) -> None:
 # ----------------------------------------------------------------------
 
 
+# Palette des badges de catégorie : 10 couleurs foncées bien distinctes,
+# lisibles en texte blanc. Une nouvelle catégorie reçoit la première
+# couleur pas encore utilisée.
+CATEGORY_PALETTE = [
+    "#7c3aed",  # violet
+    "#ea580c",  # orange
+    "#0891b2",  # cyan
+    "#db2777",  # rose
+    "#16a34a",  # vert
+    "#2563eb",  # bleu
+    "#ca8a04",  # jaune moutarde
+    "#dc2626",  # rouge
+    "#0d9488",  # turquoise
+    "#4b5563",  # gris
+]
+
+# Couleur des produits dont la catégorie n'est pas (ou plus) gérée.
+UNKNOWN_CATEGORY_COLOR = "#9ca3af"
+
+
+def _next_free_category_color(session: Session) -> str:
+    used = set(session.scalars(select(Category.color)).all())
+    for color in CATEGORY_PALETTE:
+        if color not in used:
+            return color
+    count = session.scalar(select(func.count()).select_from(Category)) or 0
+    return CATEGORY_PALETTE[count % len(CATEGORY_PALETTE)]
+
+
+def _validate_category_color(color: str) -> str:
+    color = color.strip().lower()
+    if len(color) != 7 or not color.startswith("#"):
+        raise StockError("Couleur de catégorie invalide.")
+    try:
+        int(color[1:], 16)
+    except ValueError:
+        raise StockError("Couleur de catégorie invalide.") from None
+    return color
+
+
+def category_colors(session: Session) -> dict[str, str]:
+    """Nom de catégorie -> couleur du badge, pour l'affichage des produits."""
+    return {c.name: c.color or UNKNOWN_CATEGORY_COLOR for c in list_categories(session)}
+
+
 def list_categories(session: Session) -> list[Category]:
     return list(session.scalars(select(Category).order_by(Category.name)).all())
 
@@ -1274,7 +1319,7 @@ def get_category(session: Session, category_id: int) -> Category:
     return category
 
 
-def create_category(session: Session, *, name: str) -> Category:
+def create_category(session: Session, *, name: str, color: str | None = None) -> Category:
     name = name.strip()
     if not name:
         raise StockError("Le nom de la catégorie est obligatoire.")
@@ -1283,13 +1328,16 @@ def create_category(session: Session, *, name: str) -> Category:
     if existing is not None:
         raise StockError(f"La catégorie « {name} » existe déjà.")
 
-    category = Category(name=name)
+    color = _validate_category_color(color) if color else _next_free_category_color(session)
+    category = Category(name=name, color=color)
     session.add(category)
     session.flush()
     return category
 
 
-def update_category(session: Session, category_id: int, *, name: str) -> Category:
+def update_category(
+    session: Session, category_id: int, *, name: str, color: str | None = None
+) -> Category:
     category = get_category(session, category_id)
     name = name.strip()
     if not name:
@@ -1303,6 +1351,8 @@ def update_category(session: Session, category_id: int, *, name: str) -> Categor
 
     old_name = category.name
     category.name = name
+    if color:
+        category.color = _validate_category_color(color)
     session.flush()
 
     if old_name != name:

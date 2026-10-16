@@ -25,6 +25,10 @@ class Category(Base):
 
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
 
+    # Couleur hexadécimale (« #7c3aed ») du badge de la catégorie dans le
+    # tableau des produits — choisie dans CATEGORY_PALETTE (app/services.py).
+    color: Mapped[str] = mapped_column(String(7), default="", server_default="")
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
 
     def __repr__(self) -> str:
