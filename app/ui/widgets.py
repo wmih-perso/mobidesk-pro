@@ -393,8 +393,8 @@ def category_badge(name: str, color: str) -> QWidget:
     badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
     badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
     badge.setStyleSheet(
-        f"background-color: {color}; color: #ffffff; border-radius: 10px;"
-        " padding: 3px 10px; font-size: 12px; font-weight: 700;"
+        f"background-color: {color}; color: #ffffff; border-radius: 8px;"
+        " padding: 1px 8px; font-size: 13px; font-weight: 400;"
     )
 
     wrapper = QWidget()
