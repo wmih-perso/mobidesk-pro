@@ -62,7 +62,7 @@ from app.ui.sidebar import Sidebar
 from app.ui.stock_adjust_dialog import StockAdjustmentDialog, SupplierPurchaseDialog
 from app.ui.users_panel import UsersPanel
 from app.ui.updater_dialog import UpdaterDialog
-from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow, category_badge
+from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow
 from app.updater import (
     UpdateCheckError,
     UpdateInfo,
@@ -1372,9 +1372,11 @@ class MainWindow(QMainWindow):
                     bold = QFont(item.font())
                     bold.setBold(True)
                     item.setFont(bold)
+                elif column_index == CATEGORY_COLUMN:
+                    color = self._category_colors.get(d.category, UNKNOWN_CATEGORY_COLOR)
+                    item.setForeground(QBrush(QColor(color)))
                 self.displays_table.setItem(row_index, column_index, item)
 
-            self._set_category_badge(row_index, d.id, d.category)
             self._set_alert_badge(row_index, d.id, d.is_low_stock)
             self._set_row_actions(row_index, d.id)
 
@@ -1390,21 +1392,6 @@ class MainWindow(QMainWindow):
         self.prev_page_button.setEnabled(self._current_page > 1)
         self.next_page_button.setEnabled(self._current_page < total_pages)
         self.last_page_button.setEnabled(self._current_page < total_pages)
-
-    def _set_category_badge(self, row_index: int, display_id: int, category: str) -> None:
-        # Le texte reste dans la cellule (vide visuellement) pour la
-        # sélection ; le badge coloré est posé par-dessus.
-        placeholder = QTableWidgetItem("")
-        placeholder.setData(Qt.ItemDataRole.UserRole, display_id)
-        placeholder.setToolTip(category)
-        self.displays_table.setItem(row_index, CATEGORY_COLUMN, placeholder)
-        if not category:
-            self.displays_table.removeCellWidget(row_index, CATEGORY_COLUMN)
-            return
-        color = self._category_colors.get(category, UNKNOWN_CATEGORY_COLOR)
-        self.displays_table.setCellWidget(
-            row_index, CATEGORY_COLUMN, category_badge(category, color)
-        )
 
     def _set_alert_badge(self, row_index: int, display_id: int, is_low_stock: bool) -> None:
         column_index = len(DISPLAY_COLUMNS) - 2

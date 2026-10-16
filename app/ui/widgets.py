@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -384,22 +383,3 @@ def color_dot_icon(color: str, size: int = 14) -> QIcon:
     painter.drawEllipse(0, 0, size, size)
     painter.end()
     return QIcon(pixmap)
-
-
-def category_badge(name: str, color: str) -> QWidget:
-    """Badge arrondi (texte blanc sur la couleur de la catégorie), à poser
-    dans une cellule de tableau via setCellWidget."""
-    badge = QLabel(name)
-    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
-    badge.setStyleSheet(
-        f"background-color: {color}; color: #ffffff; border-radius: 8px;"
-        " padding: 1px 8px; font-size: 13px; font-weight: 400;"
-    )
-
-    wrapper = QWidget()
-    layout = QHBoxLayout(wrapper)
-    layout.setContentsMargins(8, 0, 8, 0)
-    layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
-    layout.addStretch()
-    return wrapper
