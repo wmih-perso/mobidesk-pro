@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -10,7 +9,6 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.database import init_engine
-from app.display_config import load_ui_scale
 from app.ui.login_dialog import LoginDialog
 from app.ui.main_window import MainWindow
 
@@ -30,10 +28,6 @@ def _load_stylesheet() -> str:
 
 def main() -> int:
     init_engine()
-
-    # Zoom de l'interface (Paramètres > Affichage) — doit être fixé avant la
-    # création de QApplication pour être pris en compte.
-    os.environ.setdefault("QT_SCALE_FACTOR", str(load_ui_scale()))
 
     app = QApplication(sys.argv)
     if APP_ICON_PATH.exists():

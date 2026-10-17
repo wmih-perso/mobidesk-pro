@@ -12,7 +12,6 @@ from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -46,7 +45,6 @@ from app.services import (
     list_movements,
 )
 from app.backup import is_backup_due, load_backup_config
-from app.display_config import SCALE_CHOICES, load_ui_scale, save_ui_scale
 from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel, run_backup
 from app.ui.category_panel import CategoryPanel
@@ -774,10 +772,6 @@ class MainWindow(QMainWindow):
             line.setStyleSheet("color: #e5e7eb; background: #e5e7eb; max-height: 1px;")
             return line
 
-        card_layout.addWidget(self._build_display_section())
-        card_layout.addSpacing(20)
-        card_layout.addWidget(_separator())
-        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_ticket_section())
         card_layout.addSpacing(20)
         card_layout.addWidget(_separator())
@@ -919,69 +913,6 @@ class MainWindow(QMainWindow):
         section_layout.addWidget(self.backup_panel)
 
         return section
-
-    def _build_display_section(self) -> QWidget:
-        section = QFrame()
-        lay = QVBoxLayout(section)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
-
-        lbl = QLabel("🔠  Affichage")
-        lbl.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
-        lay.addWidget(lbl)
-
-        hint = QLabel(
-            "Agrandit tout l'écran : textes, barre de navigation, boutons et tableaux. "
-            "Le changement s'applique au redémarrage de l'application."
-        )
-        hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        size_label = QLabel("Taille du texte")
-        size_label.setFixedWidth(140)
-        size_label.setStyleSheet("color: #555; font-size: 13px;")
-        row.addWidget(size_label)
-
-        scale_combo = QComboBox()
-        scale_combo.setMinimumHeight(36)
-        scale_combo.setMinimumWidth(220)
-        current_scale = load_ui_scale()
-        for label, value in SCALE_CHOICES:
-            scale_combo.addItem(label, value)
-            if abs(value - current_scale) < 0.001:
-                scale_combo.setCurrentIndex(scale_combo.count() - 1)
-        row.addWidget(scale_combo)
-
-        restart_btn = QPushButton("🔄  Redémarrer maintenant")
-        restart_btn.setObjectName("SecondaryButton")
-        restart_btn.setFixedHeight(36)
-        restart_btn.setVisible(False)
-        restart_btn.clicked.connect(self._restart_application)
-        row.addWidget(restart_btn)
-        row.addStretch()
-        lay.addLayout(row)
-
-        def _on_scale_changed() -> None:
-            save_ui_scale(scale_combo.currentData())
-            restart_btn.setVisible(True)
-
-        scale_combo.currentIndexChanged.connect(_on_scale_changed)
-        return section
-
-    def _restart_application(self) -> None:
-        from PySide6.QtCore import QProcess
-
-        # Exe PyInstaller : sys.executable est l'exe lui-même ; en
-        # développement, c'est python et sys.argv[0] le script main.py.
-        arguments = sys.argv[1:] if is_frozen() else sys.argv
-        # Le zoom courant a été posé dans l'environnement au démarrage :
-        # on le retire pour que le nouveau processus relise le réglage.
-        os.environ.pop("QT_SCALE_FACTOR", None)
-        if QProcess.startDetached(sys.executable, arguments):
-            QApplication.quit()
 
     def _build_ticket_section(self) -> QWidget:
         from PySide6.QtWidgets import QLineEdit as _LE
