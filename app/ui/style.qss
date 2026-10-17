@@ -436,7 +436,6 @@ QTableView, QTableWidget {
     alternate-background-color: #f8faff;
     border: none;
     gridline-color: #eeeeee;
-    font-weight: 700;
 }
 
 QHeaderView::section {

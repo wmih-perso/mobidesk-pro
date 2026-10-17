@@ -394,7 +394,7 @@ def category_badge(name: str, color: str) -> QWidget:
     badge.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
     badge.setStyleSheet(
         f"background-color: {color}; color: #ffffff; border-radius: 8px;"
-        " padding: 2px 10px; font-size: 13px; font-weight: 700;"
+        " padding: 2px 10px; font-size: 13px;"
     )
 
     wrapper = QWidget()
