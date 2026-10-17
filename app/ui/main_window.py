@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon
+from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -1369,9 +1369,6 @@ class MainWindow(QMainWindow):
                 if price_style is not None:
                     color, _title = price_style
                     item.setForeground(QBrush(QColor(color)))
-                    bold = QFont(item.font())
-                    bold.setBold(True)
-                    item.setFont(bold)
                 elif column_index == CATEGORY_COLUMN:
                     color = self._category_colors.get(d.category, UNKNOWN_CATEGORY_COLOR)
                     item.setForeground(QBrush(QColor(color)))
