@@ -6,6 +6,19 @@ Les données utilisateur (base SQLite) ne sont jamais embarquées : elles sont
 créées à l'exécution dans le profil utilisateur (voir app/paths.py).
 """
 
+import importlib.util
+
+# boto3 n'est importé qu'au moment d'une sauvegarde cloud (app/backup.py) :
+# s'il manque dans l'environnement de build, PyInstaller produit quand même
+# un exe… dont la sauvegarde échoue (« No module named boto3 »). On refuse
+# donc de construire sans lui.
+for _module in ("boto3", "botocore"):
+    if importlib.util.find_spec(_module) is None:
+        raise SystemExit(
+            f"{_module} est absent de l'environnement de build : "
+            "lancez « pip install -r requirements.txt » puis relancez le build."
+        )
+
 datas = [
     ("app/ui/style.qss", "app/ui"),
     ("app/ui/resources", "app/ui/resources"),
