@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime
 import json
-import shutil
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Callable
@@ -41,16 +41,51 @@ def load_backup_config() -> dict:
     }
 
 
+def record_backup_result(success: bool, message: str) -> None:
+    """Mémorise le résultat de la dernière sauvegarde (affiché dans les
+    Paramètres). Relit le fichier pour ne pas écraser une modification de
+    la configuration faite entre-temps."""
+    config = load_backup_config()
+    config["last_backup_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+    config["last_backup_ok"] = success
+    config["last_backup_message"] = message
+    if success:
+        config["last_success_at"] = config["last_backup_at"]
+    save_backup_config(config)
+
+
+def is_backup_due(config: dict, now: datetime.datetime) -> bool:
+    """Sauvegarde automatique à faire maintenant ? Oui si elle est activée
+    et configurée, que l'heure choisie est passée, et qu'aucune sauvegarde
+    n'a réussi aujourd'hui — l'application ouverte après l'heure rattrape
+    donc la sauvegarde du jour."""
+    if not config.get("enabled") or not _has_credentials(config):
+        return False
+    if now.hour < config.get("hour", 20):
+        return False
+    last_success = config.get("last_success_at")
+    if last_success:
+        try:
+            if datetime.datetime.fromisoformat(last_success).date() == now.date():
+                return False
+        except ValueError:
+            pass
+    return True
+
+
 def save_backup_config(config: dict) -> None:
     _BACKUP_CONFIG_PATH.write_text(
         json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-def is_configured() -> bool:
-    c = load_backup_config()
+def _has_credentials(c: dict) -> bool:
     return bool(c.get("endpoint_url") and c.get("access_key_id")
                 and c.get("secret_access_key") and c.get("bucket_name"))
+
+
+def is_configured() -> bool:
+    return _has_credentials(load_backup_config())
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +128,12 @@ def _prune_old_backups(client, bucket: str, prefix: str, keep_last: int) -> None
 
 
 def upload_backup(on_done: Callable[[bool, str], None], config: dict | None = None) -> None:
-    """Copie la DB et l'uploade vers le stockage S3. Non-bloquant."""
+    """Copie la DB et l'uploade vers le stockage S3. Non-bloquant.
+
+    `on_done(succès, message)` est appelé depuis le thread d'envoi : côté
+    interface, passer par un signal Qt (voir app/ui/backup_panel.py) avant
+    de toucher aux widgets. Le résultat est aussi mémorisé dans la config
+    (record_backup_result)."""
     if config is None:
         config = load_backup_config()
 
@@ -104,7 +144,16 @@ def upload_backup(on_done: Callable[[bool, str], None], config: dict | None = No
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_name = f"stock_backup_{timestamp}.db"
             tmp = _CONFIG_DIR / backup_name
-            shutil.copy2(db_path, tmp)
+            # API de sauvegarde SQLite : copie cohérente même si l'application
+            # écrit dans la base au même moment (contrairement à une copie
+            # brute du fichier).
+            source = sqlite3.connect(db_path)
+            target = sqlite3.connect(tmp)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+                source.close()
 
             client = _make_client(config)
             bucket = config["bucket_name"]
@@ -113,11 +162,16 @@ def upload_backup(on_done: Callable[[bool, str], None], config: dict | None = No
 
             client.upload_file(str(tmp), bucket, key)
             _prune_old_backups(client, bucket, prefix, config.get("keep_last", 30))
-            on_done(True, f"Sauvegarde envoyée : {backup_name}")
+            success, message = True, f"Sauvegarde envoyée : {backup_name}"
         except Exception as exc:
-            on_done(False, f"Échec de la sauvegarde : {exc}")
+            success, message = False, f"Échec de la sauvegarde : {exc}"
         finally:
-            if tmp and tmp.exists():
-                tmp.unlink(missing_ok=True)
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass  # copie temporaire verrouillée : sans gravité
+        record_backup_result(success, message)
+        on_done(success, message)
 
     threading.Thread(target=_run, daemon=True).start()

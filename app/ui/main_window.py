@@ -45,10 +45,10 @@ from app.services import (
     list_displays,
     list_movements,
 )
-from app.backup import is_configured, load_backup_config, upload_backup
+from app.backup import is_backup_due, load_backup_config
 from app.display_config import SCALE_CHOICES, load_ui_scale, save_ui_scale
 from app.ticket_config import load_ticket_config, save_ticket_config
-from app.ui.backup_panel import BackupPanel
+from app.ui.backup_panel import BackupPanel, run_backup
 from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_page import ContactsPage
@@ -358,29 +358,30 @@ class MainWindow(QMainWindow):
         self._status_user_sep.show()
 
     def _start_backup_timer(self) -> None:
-        """Vérifie toutes les minutes si l'heure de sauvegarde est atteinte."""
-        self._last_backup_date: datetime.date | None = None
+        """Vérifie toutes les minutes si la sauvegarde du jour est due — et
+        peu après le démarrage, pour rattraper une heure déjà passée."""
+        self._backup_attempted_on: datetime.date | None = None
         timer = QTimer(self)
         timer.timeout.connect(self._check_backup)
         timer.start(60_000)
+        QTimer.singleShot(15_000, self._check_backup)
 
     def _check_backup(self) -> None:
-        config = load_backup_config()
-        if not config.get("enabled") or not is_configured():
-            return
         now = datetime.datetime.now()
-        if now.hour != config.get("hour", 20):
+        config = load_backup_config()
+        # Une seule tentative automatique par jour et par lancement : en cas
+        # d'échec (pas d'internet...), on ne réessaie pas toutes les minutes.
+        if self._backup_attempted_on == now.date() or not is_backup_due(config, now):
             return
-        if self._last_backup_date == now.date():
-            return
-        self._last_backup_date = now.date()
+        self._backup_attempted_on = now.date()
 
         def _done(success: bool, message: str) -> None:
-            from PySide6.QtWidgets import QMessageBox
+            if hasattr(self, "backup_panel"):
+                self.backup_panel._refresh_last_backup()
             if not success:
                 QMessageBox.warning(self, "Sauvegarde automatique", message)
 
-        upload_backup(_done, config=config)
+        run_backup(_done, config=config)
 
     def _start_clock(self) -> None:
         self._update_clock()

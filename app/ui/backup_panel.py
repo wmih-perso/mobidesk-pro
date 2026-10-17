@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import datetime
+
 from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
@@ -15,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.backup import is_configured, load_backup_config, save_backup_config, test_connection, upload_backup
+from app.backup import load_backup_config, save_backup_config, test_connection, upload_backup
 
 # Endpoints pré-remplis selon le fournisseur
 _PROVIDERS = {
@@ -54,11 +57,57 @@ _PROVIDERS = {
 }
 
 
+class BackupResult(QObject):
+    """Ramène le résultat d'une sauvegarde (calculé dans un thread) sur le
+    thread de l'interface : Qt interdit de toucher aux widgets, ou
+    d'ouvrir une boîte de dialogue, depuis un autre thread."""
+
+    finished = Signal(bool, str)
+
+
+# Garde une référence aux ponts en cours, jusqu'à leur signal.
+_pending: set[BackupResult] = set()
+
+
+def run_backup(on_done, config: dict | None = None) -> None:
+    """upload_backup, avec `on_done(succès, message)` appelé sur le thread
+    de l'interface."""
+    bridge = BackupResult()
+    _pending.add(bridge)
+
+    def _finish(success: bool, message: str) -> None:
+        _pending.discard(bridge)
+        bridge.deleteLater()
+        on_done(success, message)
+
+    bridge.finished.connect(_finish)
+    upload_backup(bridge.finished.emit, config=config)
+
+
+def format_last_backup(config: dict) -> tuple[str, str]:
+    """(texte, couleur) de la ligne « Dernière sauvegarde »."""
+    last = config.get("last_backup_at")
+    if not last:
+        return "Dernière sauvegarde : aucune pour l'instant", "#64748b"
+    try:
+        when = datetime.datetime.fromisoformat(last).strftime("%d/%m/%Y à %H:%M")
+    except ValueError:
+        when = last
+    if config.get("last_backup_ok"):
+        return f"Dernière sauvegarde : {when}  ✓", "#059669"
+    return f"Dernière sauvegarde : {when}  ✗  {config.get('last_backup_message', '')}", "#ef4444"
+
+
 class BackupPanel(QWidget):
+    """Configuration de la sauvegarde cloud. Rien n'est enregistré tant
+    qu'on ne clique pas sur « Enregistrer » : un champ effacé par erreur
+    ne fait pas perdre les clés."""
+
     def __init__(self) -> None:
         super().__init__()
         self._config = load_backup_config()
         self._build_ui()
+        self._refresh_last_backup()
 
     # ------------------------------------------------------------------
     # UI
@@ -110,34 +159,29 @@ class BackupPanel(QWidget):
             l.setMinimumHeight(36)
             return l
 
-        self._endpoint_input = QLineEdit(self._config.get("endpoint_url", ""))
-        self._endpoint_input.setPlaceholderText("https://...")
-        self._endpoint_input.setMinimumHeight(36)
-        self._endpoint_input.setStyleSheet(_inp_style)
-        self._endpoint_input.textChanged.connect(self._save_config)
+        def _line(key: str, placeholder: str = "", secret: bool = False) -> QLineEdit:
+            field = QLineEdit(self._config.get(key, ""))
+            field.setPlaceholderText(placeholder)
+            field.setMinimumHeight(36)
+            field.setStyleSheet(_inp_style)
+            if secret:
+                field.setEchoMode(QLineEdit.EchoMode.Password)
+            field.textChanged.connect(self._mark_unsaved)
+            return field
+
+        self._endpoint_input = _line("endpoint_url", "https://...")
         grid.addWidget(_lbl("Endpoint URL"), 0, 0)
         grid.addWidget(self._endpoint_input, 0, 1)
 
-        self._key_input = QLineEdit(self._config.get("access_key_id", ""))
-        self._key_input.setMinimumHeight(36)
-        self._key_input.setStyleSheet(_inp_style)
-        self._key_input.textChanged.connect(self._save_config)
+        self._key_input = _line("access_key_id")
         grid.addWidget(_lbl("Access Key ID"), 1, 0)
         grid.addWidget(self._key_input, 1, 1)
 
-        self._secret_input = QLineEdit(self._config.get("secret_access_key", ""))
-        self._secret_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._secret_input.setMinimumHeight(36)
-        self._secret_input.setStyleSheet(_inp_style)
-        self._secret_input.textChanged.connect(self._save_config)
+        self._secret_input = _line("secret_access_key", secret=True)
         grid.addWidget(_lbl("Secret Key"), 2, 0)
         grid.addWidget(self._secret_input, 2, 1)
 
-        self._bucket_input = QLineEdit(self._config.get("bucket_name", ""))
-        self._bucket_input.setPlaceholderText("mobidesk-backups")
-        self._bucket_input.setMinimumHeight(36)
-        self._bucket_input.setStyleSheet(_inp_style)
-        self._bucket_input.textChanged.connect(self._save_config)
+        self._bucket_input = _line("bucket_name", "mobidesk-backups")
         grid.addWidget(_lbl("Nom du bucket"), 3, 0)
         grid.addWidget(self._bucket_input, 3, 1)
 
@@ -147,7 +191,7 @@ class BackupPanel(QWidget):
         self._keep_spin.setSuffix(" dernières sauvegardes")
         self._keep_spin.setMinimumHeight(36)
         self._keep_spin.setFixedWidth(230)
-        self._keep_spin.valueChanged.connect(self._save_config)
+        self._keep_spin.valueChanged.connect(self._mark_unsaved)
         grid.addWidget(_lbl("Conserver les"), 4, 0)
         grid.addWidget(self._keep_spin, 4, 1)
 
@@ -157,32 +201,61 @@ class BackupPanel(QWidget):
         self._hour_spin.setSuffix("h00")
         self._hour_spin.setMinimumHeight(36)
         self._hour_spin.setFixedWidth(90)
-        self._hour_spin.valueChanged.connect(self._save_config)
+        self._hour_spin.valueChanged.connect(self._mark_unsaved)
         grid.addWidget(_lbl("Heure auto"), 5, 0)
         grid.addWidget(self._hour_spin, 5, 1)
 
+        self._enabled_check = QCheckBox(
+            "Activer la sauvegarde automatique (chaque jour à l'heure choisie, "
+            "ou dès l'ouverture de l'application si l'heure est passée)"
+        )
+        self._enabled_check.setChecked(bool(self._config.get("enabled")))
+        self._enabled_check.toggled.connect(self._mark_unsaved)
+        grid.addWidget(self._enabled_check, 6, 1)
+
         layout.addLayout(grid)
 
-        # Test + statut
-        test_row = QHBoxLayout()
+        # Boutons + statut
+        buttons_row = QHBoxLayout()
+        self._save_btn = QPushButton("💾  Enregistrer")
+        self._save_btn.clicked.connect(self._on_save)
+        buttons_row.addWidget(self._save_btn)
+
         self._test_btn = QPushButton("Tester la connexion")
         self._test_btn.setObjectName("SecondaryButton")
         self._test_btn.clicked.connect(self._on_test_connection)
-        test_row.addWidget(self._test_btn)
+        buttons_row.addWidget(self._test_btn)
 
         self._backup_now_btn = QPushButton("Sauvegarder maintenant")
+        self._backup_now_btn.setObjectName("SecondaryButton")
         self._backup_now_btn.clicked.connect(self._on_backup_now)
-        test_row.addWidget(self._backup_now_btn)
-        test_row.addStretch()
-        layout.addLayout(test_row)
+        buttons_row.addWidget(self._backup_now_btn)
+        buttons_row.addStretch()
+        layout.addLayout(buttons_row)
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
 
+        self._last_backup_label = QLabel("")
+        self._last_backup_label.setWordWrap(True)
+        layout.addWidget(self._last_backup_label)
+
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
+
+    def _set_status(self, text: str, color: str, bold: bool = False) -> None:
+        self._status_label.setText(text)
+        self._status_label.setStyleSheet(f"color: {color};" + (" font-weight: 600;" if bold else ""))
+
+    def _mark_unsaved(self, *_args) -> None:
+        self._set_status("⚠  Modifications non enregistrées — cliquez sur « Enregistrer ».", "#b45309")
+
+    def _refresh_last_backup(self) -> None:
+        text, color = format_last_backup(load_backup_config())
+        self._last_backup_label.setText(text)
+        self._last_backup_label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _on_provider_changed(self, provider: str) -> None:
         info = _PROVIDERS.get(provider, {})
@@ -196,51 +269,62 @@ class BackupPanel(QWidget):
         guide = _PROVIDERS.get(provider, {}).get("guide", "")
         QMessageBox.information(self, f"Guide — {provider}", guide)
 
+    def _on_save(self) -> None:
+        config = self._current_config()
+        missing = [
+            label for key, label in (
+                ("endpoint_url", "Endpoint URL"), ("access_key_id", "Access Key ID"),
+                ("secret_access_key", "Secret Key"), ("bucket_name", "Nom du bucket"),
+            ) if not config[key]
+        ]
+        if config["enabled"] and missing:
+            self._set_status(
+                "Impossible d'activer la sauvegarde : champ(s) manquant(s) — " + ", ".join(missing) + ".",
+                "#ef4444",
+            )
+            return
+        # Les résultats de sauvegarde peuvent avoir été mis à jour entre-temps.
+        self._config = {**load_backup_config(), **config}
+        save_backup_config(self._config)
+        if config["enabled"]:
+            self._set_status(
+                f"✓  Enregistré. Sauvegarde automatique activée chaque jour à {config['hour']}h00.",
+                "#059669", bold=True,
+            )
+        else:
+            self._set_status("✓  Enregistré. Sauvegarde automatique désactivée.", "#059669", bold=True)
+
     def _on_test_connection(self) -> None:
-        self._status_label.setText("Test en cours…")
-        self._status_label.setStyleSheet("color: #64748b;")
+        self._set_status("Test en cours…", "#64748b")
         self._test_btn.setEnabled(False)
         config = self._current_config()
 
         import threading
 
-        # Signal helper pour ramener le résultat sur le thread principal
-        class _Bridge(QObject):
-            done = Signal(bool, str)
+        bridge = BackupResult()
+        _pending.add(bridge)
 
-        bridge = _Bridge()
-        bridge.done.connect(self._on_test_result)
-        bridge.done.connect(lambda: bridge.deleteLater())
+        def _finish(success: bool, msg: str) -> None:
+            _pending.discard(bridge)
+            bridge.deleteLater()
+            self._test_btn.setEnabled(True)
+            self._set_status(msg, "#059669" if success else "#ef4444", bold=success)
 
-        def _run(b=bridge, cfg=config):
-            success, msg = test_connection(cfg)
-            if success:
-                cfg["enabled"] = True
-                save_backup_config(cfg)
-            b.done.emit(success, msg)
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _on_test_result(self, success: bool, msg: str) -> None:
-        self._test_btn.setEnabled(True)
-        self._status_label.setText(msg)
-        self._status_label.setStyleSheet(
-            "color: #059669; font-weight:600;" if success else "color: #ef4444;"
-        )
+        bridge.finished.connect(_finish)
+        threading.Thread(
+            target=lambda: bridge.finished.emit(*test_connection(config)), daemon=True
+        ).start()
 
     def _on_backup_now(self) -> None:
-        self._status_label.setText("Sauvegarde en cours…")
-        self._status_label.setStyleSheet("color: #64748b;")
+        self._set_status("Sauvegarde en cours…", "#64748b")
         self._backup_now_btn.setEnabled(False)
 
         def _done(success: bool, message: str) -> None:
-            self._status_label.setText(message)
-            self._status_label.setStyleSheet(
-                "color: #059669; font-weight:600;" if success else "color: #ef4444;"
-            )
+            self._set_status(message, "#059669" if success else "#ef4444", bold=success)
             self._backup_now_btn.setEnabled(True)
+            self._refresh_last_backup()
 
-        upload_backup(_done, config=self._current_config())
+        run_backup(_done, config=self._current_config())
 
     # ------------------------------------------------------------------
     # Config
@@ -255,8 +339,5 @@ class BackupPanel(QWidget):
             "bucket_name": self._bucket_input.text().strip(),
             "keep_last": self._keep_spin.value(),
             "hour": self._hour_spin.value(),
+            "enabled": self._enabled_check.isChecked(),
         }
-
-    def _save_config(self) -> None:
-        self._config = self._current_config()
-        save_backup_config(self._config)
