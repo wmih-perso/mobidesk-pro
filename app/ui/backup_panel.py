@@ -1,60 +1,52 @@
-"""Panneau de configuration des sauvegardes automatiques (S3 / Backblaze B2 / Cloudflare R2)."""
+"""Panneau de sauvegarde automatique vers le cloud (Backblaze B2 / S3).
+
+Les clés du stockage ne s'affichent jamais : elles sont importées une fois
+par PC (compte admin) depuis un fichier JSON gardé hors de l'application,
+puis conservées dans la configuration locale (voir app/backup.py). L'écran
+ne propose que l'activation, l'heure, le test et la sauvegarde immédiate.
+"""
 
 from __future__ import annotations
 
 import datetime
+import json
 
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from app.backup import load_backup_config, save_backup_config, test_connection, upload_backup
+from app import session as _session
+from app.backup import (
+    CREDENTIALS_TEMPLATE,
+    import_credentials,
+    is_configured,
+    load_backup_config,
+    save_backup_config,
+    test_connection,
+    upload_backup,
+)
 
-# Endpoints pré-remplis selon le fournisseur
-_PROVIDERS = {
-    "Backblaze B2": {
-        "hint_endpoint": "https://s3.<region>.backblazeb2.com  (ex: https://s3.us-west-004.backblazeb2.com)",
-        "hint_key": "Key ID (commence par 00...)",
-        "hint_secret": "Application Key",
-        "guide": (
-            "1. Créez un compte sur backblaze.com\n"
-            "2. Allez dans «B2 Cloud Storage» → «Buckets» → «Create a Bucket»\n"
-            "   Nom : mobidesk-backups  |  Type : Private\n"
-            "3. Allez dans «App Keys» → «Add a New Application Key»\n"
-            "   Donnez accès au bucket créé\n"
-            "4. Copiez le keyID et applicationKey affichés (ils ne s'affichent qu'une fois)\n"
-            "5. L'endpoint se trouve dans les infos du bucket (ex: s3.us-west-004.backblazeb2.com)\n"
-            "   Ajoutez «https://» devant\n"
-            "6. Entrez ces valeurs dans les champs ci-dessous et cliquez «Tester»"
-        ),
-    },
-    "Cloudflare R2": {
-        "hint_endpoint": "https://<account-id>.r2.cloudflarestorage.com",
-        "hint_key": "Access Key ID",
-        "hint_secret": "Secret Access Key",
-        "guide": (
-            "1. Créez un compte sur cloudflare.com\n"
-            "2. Allez dans R2 Object Storage → «Create bucket»\n"
-            "   Nom : mobidesk-backups\n"
-            "3. Allez dans «Manage R2 API Tokens» → «Create API Token»\n"
-            "   Permissions : Object Read & Write sur le bucket créé\n"
-            "4. Copiez Access Key ID et Secret Access Key\n"
-            "5. L'endpoint est : https://<votre-account-id>.r2.cloudflarestorage.com\n"
-            "   (votre Account ID se trouve dans la page d'accueil Cloudflare)\n"
-            "6. Entrez ces valeurs dans les champs ci-dessous et cliquez «Tester»"
-        ),
-    },
-}
+_TEMPLATE_GUIDE = (
+    "Remplissez le fichier avec les informations de votre compte Backblaze B2 :\n\n"
+    "• endpoint_url : dans « Buckets », champ « Endpoint » du bucket,\n"
+    "  précédé de https://  (ex : https://s3.eu-central-003.backblazeb2.com)\n"
+    "• access_key_id : le « keyID » de votre clé (App Keys)\n"
+    "• secret_access_key : l'« applicationKey » (affichée une seule fois\n"
+    "  à la création de la clé)\n"
+    "• bucket_name : le nom du bucket\n\n"
+    "Puis cliquez sur « Importer les clés… ». Gardez ce fichier en lieu sûr\n"
+    "(clé USB) : il sert à configurer les autres PC."
+)
 
 
 class BackupResult(QObject):
@@ -69,9 +61,7 @@ class BackupResult(QObject):
 _pending: set[BackupResult] = set()
 
 
-def run_backup(on_done, config: dict | None = None) -> None:
-    """upload_backup, avec `on_done(succès, message)` appelé sur le thread
-    de l'interface."""
+def _bridge(on_done) -> BackupResult:
     bridge = BackupResult()
     _pending.add(bridge)
 
@@ -81,7 +71,23 @@ def run_backup(on_done, config: dict | None = None) -> None:
         on_done(success, message)
 
     bridge.finished.connect(_finish)
-    upload_backup(bridge.finished.emit, config=config)
+    return bridge
+
+
+def run_backup(on_done, config: dict | None = None) -> None:
+    """upload_backup, avec `on_done(succès, message)` appelé sur le thread
+    de l'interface."""
+    upload_backup(_bridge(on_done).finished.emit, config=config)
+
+
+def _run_test(on_done, config: dict) -> None:
+    """test_connection dans un thread, résultat sur le thread de l'interface."""
+    import threading
+
+    bridge = _bridge(on_done)
+    threading.Thread(
+        target=lambda: bridge.finished.emit(*test_connection(config)), daemon=True
+    ).start()
 
 
 def format_last_backup(config: dict) -> tuple[str, str]:
@@ -99,15 +105,13 @@ def format_last_backup(config: dict) -> tuple[str, str]:
 
 
 class BackupPanel(QWidget):
-    """Configuration de la sauvegarde cloud. Rien n'est enregistré tant
-    qu'on ne clique pas sur « Enregistrer » : un champ effacé par erreur
-    ne fait pas perdre les clés."""
-
     def __init__(self) -> None:
         super().__init__()
-        self._config = load_backup_config()
         self._build_ui()
-        self._refresh_last_backup()
+        self._load()
+        self._hour_spin.valueChanged.connect(self._mark_unsaved)
+        self._keep_spin.valueChanged.connect(self._mark_unsaved)
+        self._enabled_check.toggled.connect(self._mark_unsaved)
 
     # ------------------------------------------------------------------
     # UI
@@ -118,104 +122,48 @@ class BackupPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        # Sélecteur fournisseur
-        provider_row = QHBoxLayout()
-        provider_row.setSpacing(8)
-        prov_lbl = QLabel("Fournisseur :")
-        prov_lbl.setFixedWidth(140)
-        prov_lbl.setFixedHeight(38)
-        prov_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        provider_row.addWidget(prov_lbl)
-        self._provider_combo = QComboBox()
-        self._provider_combo.setFixedHeight(38)
-        self._provider_combo.addItems(list(_PROVIDERS.keys()))
-        self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
-        provider_row.addWidget(self._provider_combo)
-        guide_btn = QPushButton("Guide")
-        guide_btn.setFixedHeight(38)
-        guide_btn.setObjectName("SecondaryButton")
-        guide_btn.clicked.connect(self._on_guide)
-        provider_row.addWidget(guide_btn)
-        provider_row.addStretch()
-        layout.addLayout(provider_row)
-
-        # Formulaire — QGridLayout avec espacement vertical garanti
-        _inp_style = (
-            "QLineEdit { border: 1px solid #d1d5db; border-radius: 6px;"
-            " padding: 7px 10px; font-size: 13px; background: #ffffff; }"
-            "QLineEdit:focus { border: 2px solid #2563eb; }"
-        )
+        self._account_label = QLabel("")
+        self._account_label.setWordWrap(True)
+        layout.addWidget(self._account_label)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(10)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnMinimumWidth(0, 140)
-        grid.setColumnStretch(1, 1)
 
         def _lbl(text):
-            l = QLabel(text + " :")
-            l.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            l.setMinimumHeight(36)
-            return l
-
-        def _line(key: str, placeholder: str = "", secret: bool = False) -> QLineEdit:
-            field = QLineEdit(self._config.get(key, ""))
-            field.setPlaceholderText(placeholder)
-            field.setMinimumHeight(36)
-            field.setStyleSheet(_inp_style)
-            if secret:
-                field.setEchoMode(QLineEdit.EchoMode.Password)
-            field.textChanged.connect(self._mark_unsaved)
-            return field
-
-        self._endpoint_input = _line("endpoint_url", "https://...")
-        grid.addWidget(_lbl("Endpoint URL"), 0, 0)
-        grid.addWidget(self._endpoint_input, 0, 1)
-
-        self._key_input = _line("access_key_id")
-        grid.addWidget(_lbl("Access Key ID"), 1, 0)
-        grid.addWidget(self._key_input, 1, 1)
-
-        self._secret_input = _line("secret_access_key", secret=True)
-        grid.addWidget(_lbl("Secret Key"), 2, 0)
-        grid.addWidget(self._secret_input, 2, 1)
-
-        self._bucket_input = _line("bucket_name", "mobidesk-backups")
-        grid.addWidget(_lbl("Nom du bucket"), 3, 0)
-        grid.addWidget(self._bucket_input, 3, 1)
-
-        self._keep_spin = QSpinBox()
-        self._keep_spin.setRange(1, 365)
-        self._keep_spin.setValue(self._config.get("keep_last", 30))
-        self._keep_spin.setSuffix(" dernières sauvegardes")
-        self._keep_spin.setMinimumHeight(36)
-        self._keep_spin.setFixedWidth(230)
-        self._keep_spin.valueChanged.connect(self._mark_unsaved)
-        grid.addWidget(_lbl("Conserver les"), 4, 0)
-        grid.addWidget(self._keep_spin, 4, 1)
+            label = QLabel(text + " :")
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setMinimumHeight(36)
+            return label
 
         self._hour_spin = QSpinBox()
         self._hour_spin.setRange(0, 23)
-        self._hour_spin.setValue(self._config.get("hour", 20))
         self._hour_spin.setSuffix("h00")
         self._hour_spin.setMinimumHeight(36)
         self._hour_spin.setFixedWidth(90)
-        self._hour_spin.valueChanged.connect(self._mark_unsaved)
-        grid.addWidget(_lbl("Heure auto"), 5, 0)
-        grid.addWidget(self._hour_spin, 5, 1)
+        grid.addWidget(_lbl("Heure auto"), 0, 0)
+        grid.addWidget(self._hour_spin, 0, 1)
+
+        self._keep_spin = QSpinBox()
+        self._keep_spin.setRange(1, 365)
+        self._keep_spin.setSuffix(" dernières sauvegardes")
+        self._keep_spin.setMinimumHeight(36)
+        self._keep_spin.setFixedWidth(230)
+        grid.addWidget(_lbl("Conserver les"), 1, 0)
+        grid.addWidget(self._keep_spin, 1, 1)
 
         self._enabled_check = QCheckBox(
             "Activer la sauvegarde automatique (chaque jour à l'heure choisie, "
             "ou dès l'ouverture de l'application si l'heure est passée)"
         )
-        self._enabled_check.setChecked(bool(self._config.get("enabled")))
-        self._enabled_check.toggled.connect(self._mark_unsaved)
-        grid.addWidget(self._enabled_check, 6, 1)
+        grid.addWidget(self._enabled_check, 2, 1)
+        grid_row = QHBoxLayout()
+        grid_row.addLayout(grid)
+        grid_row.addStretch()
+        layout.addLayout(grid_row)
 
-        layout.addLayout(grid)
-
-        # Boutons + statut
         buttons_row = QHBoxLayout()
         self._save_btn = QPushButton("💾  Enregistrer")
         self._save_btn.clicked.connect(self._on_save)
@@ -231,6 +179,19 @@ class BackupPanel(QWidget):
         self._backup_now_btn.clicked.connect(self._on_backup_now)
         buttons_row.addWidget(self._backup_now_btn)
         buttons_row.addStretch()
+
+        # Gestion des clés : compte admin uniquement.
+        self._import_btn = QPushButton("🔑  Importer les clés…")
+        self._import_btn.setObjectName("SecondaryButton")
+        self._import_btn.clicked.connect(self._on_import)
+        buttons_row.addWidget(self._import_btn)
+        self._template_btn = QPushButton("📄  Créer un modèle de fichier…")
+        self._template_btn.setObjectName("SecondaryButton")
+        self._template_btn.clicked.connect(self._on_create_template)
+        buttons_row.addWidget(self._template_btn)
+        is_admin = _session.is_admin()
+        self._import_btn.setVisible(is_admin)
+        self._template_btn.setVisible(is_admin)
         layout.addLayout(buttons_row)
 
         self._status_label = QLabel("")
@@ -240,6 +201,35 @@ class BackupPanel(QWidget):
         self._last_backup_label = QLabel("")
         self._last_backup_label.setWordWrap(True)
         layout.addWidget(self._last_backup_label)
+
+    def _load(self) -> None:
+        """(Re)charge l'écran depuis la configuration enregistrée."""
+        config = load_backup_config()
+        widgets = (self._hour_spin, self._keep_spin, self._enabled_check)
+        for widget in widgets:
+            widget.blockSignals(True)
+        self._hour_spin.setValue(config.get("hour", 20))
+        self._keep_spin.setValue(config.get("keep_last", 30))
+        self._enabled_check.setChecked(bool(config.get("enabled")))
+        for widget in widgets:
+            widget.blockSignals(False)
+
+        configured = is_configured()
+        if configured:
+            self._account_label.setText(
+                "Compte cloud : <b style='color:#059669;'>configuré ✓</b>"
+                f"  —  bucket « {config.get('bucket_name')} »"
+            )
+        else:
+            self._account_label.setText(
+                "Compte cloud : <b style='color:#ef4444;'>non configuré</b>  —  "
+                + ("importez le fichier de clés avec « Importer les clés… »."
+                   if _session.is_admin() else
+                   "demandez à l'administrateur d'importer les clés sur ce PC.")
+            )
+        self._test_btn.setEnabled(configured)
+        self._backup_now_btn.setEnabled(configured)
+        self._refresh_last_backup()
 
     # ------------------------------------------------------------------
     # Actions
@@ -257,36 +247,22 @@ class BackupPanel(QWidget):
         self._last_backup_label.setText(text)
         self._last_backup_label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
-    def _on_provider_changed(self, provider: str) -> None:
-        info = _PROVIDERS.get(provider, {})
-        self._endpoint_input.setPlaceholderText(info.get("hint_endpoint", ""))
-        self._key_input.setPlaceholderText(info.get("hint_key", ""))
-        self._secret_input.setPlaceholderText(info.get("hint_secret", ""))
-
-    def _on_guide(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        provider = self._provider_combo.currentText()
-        guide = _PROVIDERS.get(provider, {}).get("guide", "")
-        QMessageBox.information(self, f"Guide — {provider}", guide)
-
     def _on_save(self) -> None:
-        config = self._current_config()
-        missing = [
-            label for key, label in (
-                ("endpoint_url", "Endpoint URL"), ("access_key_id", "Access Key ID"),
-                ("secret_access_key", "Secret Key"), ("bucket_name", "Nom du bucket"),
-            ) if not config[key]
-        ]
-        if config["enabled"] and missing:
+        enabled = self._enabled_check.isChecked()
+        if enabled and not is_configured():
             self._set_status(
-                "Impossible d'activer la sauvegarde : champ(s) manquant(s) — " + ", ".join(missing) + ".",
+                "Impossible d'activer la sauvegarde : les clés du compte cloud ne sont pas importées.",
                 "#ef4444",
             )
             return
-        # Les résultats de sauvegarde peuvent avoir été mis à jour entre-temps.
-        self._config = {**load_backup_config(), **config}
-        save_backup_config(self._config)
-        if config["enabled"]:
+        config = {
+            **load_backup_config(),
+            "hour": self._hour_spin.value(),
+            "keep_last": self._keep_spin.value(),
+            "enabled": enabled,
+        }
+        save_backup_config(config)
+        if enabled:
             self._set_status(
                 f"✓  Enregistré. Sauvegarde automatique activée chaque jour à {config['hour']}h00.",
                 "#059669", bold=True,
@@ -297,23 +273,12 @@ class BackupPanel(QWidget):
     def _on_test_connection(self) -> None:
         self._set_status("Test en cours…", "#64748b")
         self._test_btn.setEnabled(False)
-        config = self._current_config()
 
-        import threading
-
-        bridge = BackupResult()
-        _pending.add(bridge)
-
-        def _finish(success: bool, msg: str) -> None:
-            _pending.discard(bridge)
-            bridge.deleteLater()
+        def _done(success: bool, message: str) -> None:
             self._test_btn.setEnabled(True)
-            self._set_status(msg, "#059669" if success else "#ef4444", bold=success)
+            self._set_status(message, "#059669" if success else "#ef4444", bold=success)
 
-        bridge.finished.connect(_finish)
-        threading.Thread(
-            target=lambda: bridge.finished.emit(*test_connection(config)), daemon=True
-        ).start()
+        _run_test(_done, load_backup_config())
 
     def _on_backup_now(self) -> None:
         self._set_status("Sauvegarde en cours…", "#64748b")
@@ -324,20 +289,33 @@ class BackupPanel(QWidget):
             self._backup_now_btn.setEnabled(True)
             self._refresh_last_backup()
 
-        run_backup(_done, config=self._current_config())
+        run_backup(_done, config={**load_backup_config(), "keep_last": self._keep_spin.value()})
 
-    # ------------------------------------------------------------------
-    # Config
-    # ------------------------------------------------------------------
+    def _on_import(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importer les clés du compte cloud", "", "Fichier de clés (*.json)"
+        )
+        if not path:
+            return
+        try:
+            import_credentials(path)
+        except ValueError as error:
+            self._set_status(str(error), "#ef4444")
+            return
+        self._load()
+        self._on_test_connection()
 
-    def _current_config(self) -> dict:
-        return {
-            **self._config,
-            "endpoint_url": self._endpoint_input.text().strip(),
-            "access_key_id": self._key_input.text().strip(),
-            "secret_access_key": self._secret_input.text().strip(),
-            "bucket_name": self._bucket_input.text().strip(),
-            "keep_last": self._keep_spin.value(),
-            "hour": self._hour_spin.value(),
-            "enabled": self._enabled_check.isChecked(),
-        }
+    def _on_create_template(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Créer un modèle de fichier de clés", "mobidesk_cles_cloud.json",
+            "Fichier de clés (*.json)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(CREDENTIALS_TEMPLATE, file, ensure_ascii=False, indent=2)
+        except OSError as error:
+            self._set_status(f"Impossible de créer le fichier : {error}", "#ef4444")
+            return
+        QMessageBox.information(self, "Modèle créé", f"Fichier créé :\n{path}\n\n{_TEMPLATE_GUIDE}")
