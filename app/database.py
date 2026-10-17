@@ -61,6 +61,7 @@ def _migrate_stock_movements_schema(engine) -> None:
             "reseller_balance_before_cents": "INTEGER NOT NULL DEFAULT 0",
             "supplier_versement_cents": "INTEGER NOT NULL DEFAULT 0",
             "supplier_balance_before_cents": "INTEGER NOT NULL DEFAULT 0",
+            "return_id": "INTEGER",
         }
 
         for column_name, ddl_type in columns_to_add.items():
@@ -215,6 +216,95 @@ def _migrate_categories_schema(engine) -> None:
         connection.commit()
 
 
+def _migrate_legacy_returns(engine) -> None:
+    """Convertit les retours saisis avant les bons de retour (mouvements
+    « Retour… » sans return_id) en ReturnDoc + ReturnLine, pour qu'ils
+    apparaissent dans l'onglet Retours et comptent dans le bénéfice comme
+    avant : prix et coût repris de la vente d'origine quand elle est
+    connue, 0 sinon (même règle que l'ancien calcul). Les dettes ne sont
+    pas modifiées — ces anciens retours ne les avaient jamais touchées.
+    Idempotente : un mouvement converti reçoit son return_id.
+    """
+    with engine.connect() as connection:
+        legacy = connection.exec_driver_sql(
+            "SELECT id, display_id, change_quantity, reason, reseller_id, supplier_id,"
+            " linked_batch_id, movement_batch_id, created_at, unit_purchase_price_cents"
+            " FROM stock_movements"
+            " WHERE reason LIKE 'Retour%' AND return_id IS NULL AND change_quantity != 0"
+            " ORDER BY id"
+        ).fetchall()
+
+        for (movement_id, display_id, change, reason, reseller_id, supplier_id,
+             linked_batch_id, movement_batch_id, created_at, movement_cost) in legacy:
+            quantity = abs(change)
+            note = reason.split(" — ", 1)[1] if " — " in reason else ""
+            origin_id = None
+
+            if change > 0:
+                kind, settlement, status = "customer", "legacy", "done"
+                price = cost = 0
+                if linked_batch_id is not None:
+                    origin = connection.exec_driver_sql(
+                        "SELECT id, unit_sale_price_cents, unit_purchase_price_cents"
+                        " FROM stock_movements WHERE movement_batch_id = ? AND display_id = ?"
+                        " AND is_sale = 1 ORDER BY id LIMIT 1",
+                        (linked_batch_id, display_id),
+                    ).fetchone()
+                    if origin is not None:
+                        origin_id, price, cost = origin
+            else:
+                kind = "supplier"
+                origin = None
+                if linked_batch_id is not None:
+                    origin = connection.exec_driver_sql(
+                        "SELECT id, unit_purchase_price_cents FROM stock_movements"
+                        " WHERE movement_batch_id = ? AND display_id = ? AND change_quantity > 0"
+                        " ORDER BY id LIMIT 1",
+                        (linked_batch_id, display_id),
+                    ).fetchone()
+                if origin is not None:
+                    origin_id, cost = origin
+                else:
+                    cost = movement_cost or connection.exec_driver_sql(
+                        "SELECT purchase_price_cents FROM displays WHERE id = ?", (display_id,)
+                    ).fetchone()[0]
+                price = cost
+                # Ancienne résolution : mouvement « Remplacement… » ou
+                # « Remboursement… » lié au retour (movement_batch_id ou id).
+                resolution = connection.exec_driver_sql(
+                    "SELECT reason FROM stock_movements WHERE linked_batch_id = ?"
+                    " AND (reason LIKE 'Remplacement%' OR reason LIKE 'Remboursement%')"
+                    " ORDER BY id LIMIT 1",
+                    (movement_batch_id or movement_id,),
+                ).fetchone()
+                if resolution is None:
+                    settlement, status = "exchange", "pending"
+                elif resolution[0].startswith("Remplacement"):
+                    settlement, status = "exchange", "done"
+                else:
+                    settlement, status = "cash", "done"
+
+            cursor = connection.exec_driver_sql(
+                "INSERT INTO returns (kind, reseller_id, supplier_id, source_batch_id, settlement,"
+                " status, amount_cents, balance_before_cents, balance_after_cents, note,"
+                " cashier_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, '', ?)",
+                (kind, reseller_id if kind == "customer" else None,
+                 supplier_id if kind == "supplier" else None, linked_batch_id, settlement,
+                 status, price * quantity, note, created_at),
+            )
+            return_id = cursor.lastrowid
+            connection.exec_driver_sql(
+                "INSERT INTO return_lines (return_id, display_id, quantity, unit_price_cents,"
+                " unit_cost_cents, condition, origin_movement_id)"
+                " VALUES (?, ?, ?, ?, ?, 'good', ?)",
+                (return_id, display_id, quantity, price, cost, origin_id),
+            )
+            connection.exec_driver_sql(
+                "UPDATE stock_movements SET return_id = ? WHERE id = ?", (return_id, movement_id)
+            )
+        connection.commit()
+
+
 _DEFAULT_CATEGORIES = ["Afficheur", "Batterie", "Autre"]
 
 
@@ -354,6 +444,7 @@ def init_engine(database_path: Path | str | None = None):
     _ensure_indexes(_engine)
     _seed_stock_batches(_engine)
     _seed_default_admin(_engine)
+    _migrate_legacy_returns(_engine)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine
 

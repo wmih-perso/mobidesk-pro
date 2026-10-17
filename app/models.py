@@ -149,6 +149,9 @@ class StockMovement(Base):
     # Solde du fournisseur figé AVANT cet achat (snapshot pour ticket).
     supplier_balance_before_cents: Mapped[int] = mapped_column(default=0)
 
+    # Bon de retour (ReturnDoc) à l'origine de ce mouvement, le cas échéant.
+    return_id: Mapped[int | None] = mapped_column(default=None, index=True)
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property
@@ -336,3 +339,91 @@ class StockBatch(Base):
             f"<StockBatch display_id={self.display_id} "
             f"remaining={self.quantity_remaining}/{self.quantity_original}>"
         )
+
+
+class ReturnDoc(Base):
+    """Un bon de retour — client/revendeur (le produit revient) ou
+    fournisseur (le produit repart). Regroupe une ou plusieurs lignes
+    (ReturnLine) et trace le règlement et l'effet sur la dette du contact.
+    """
+
+    __tablename__ = "returns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    kind: Mapped[str] = mapped_column(String(10), index=True)  # "customer" | "supplier"
+
+    reseller_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resellers.id"), default=None, index=True
+    )
+    reseller: Mapped["Reseller | None"] = relationship()
+    supplier_id: Mapped[int | None] = mapped_column(
+        ForeignKey("suppliers.id"), default=None, index=True
+    )
+    supplier: Mapped["Supplier | None"] = relationship()
+
+    # movement_batch_id de la vente / de l'achat d'origine (None pour un
+    # renvoi fournisseur de produits défectueux, ou un ancien retour libre).
+    source_batch_id: Mapped[int | None] = mapped_column(default=None, index=True)
+
+    # "debt" (déduit de la dette / avoir), "cash" (espèces), "exchange"
+    # (échange fournisseur), "legacy" (retour saisi avant cette version).
+    settlement: Mapped[str] = mapped_column(String(10), default="debt")
+    # "done" ou "pending" (échange fournisseur pas encore reçu).
+    status: Mapped[str] = mapped_column(String(10), default="done", index=True)
+
+    amount_cents: Mapped[int] = mapped_column(default=0)
+    balance_before_cents: Mapped[int] = mapped_column(default=0)
+    balance_after_cents: Mapped[int] = mapped_column(default=0)
+
+    note: Mapped[str] = mapped_column(String(255), default="")
+    cashier_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
+
+    lines: Mapped[list["ReturnLine"]] = relationship(
+        back_populates="return_doc", cascade="all, delete-orphan", order_by="ReturnLine.id"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReturnDoc #{self.id} {self.kind} {self.amount_cents}>"
+
+
+class ReturnLine(Base):
+    """Une ligne de bon de retour : un produit, une quantité, et les prix
+    d'origine figés (prix de vente et coût d'achat pour un retour client,
+    prix d'achat pour un retour fournisseur)."""
+
+    __tablename__ = "return_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    return_id: Mapped[int] = mapped_column(ForeignKey("returns.id"), index=True)
+    return_doc: Mapped["ReturnDoc"] = relationship(back_populates="lines")
+
+    display_id: Mapped[int] = mapped_column(ForeignKey("displays.id"), index=True)
+    display: Mapped["Display"] = relationship()
+
+    quantity: Mapped[int]
+    # Prix unitaire remboursé / crédité (vente d'origine pour un client,
+    # achat d'origine pour un fournisseur).
+    unit_price_cents: Mapped[int] = mapped_column(default=0)
+    # Coût d'achat unitaire du produit (sert au bénéfice et au lot FIFO).
+    unit_cost_cents: Mapped[int] = mapped_column(default=0)
+
+    # Retour client : "good" (remis en stock) ou "defective" (mis de côté,
+    # à renvoyer au fournisseur). Toujours "good" côté fournisseur.
+    condition: Mapped[str] = mapped_column(String(10), default="good")
+
+    # Mouvement de vente / d'achat d'origine.
+    origin_movement_id: Mapped[int | None] = mapped_column(default=None, index=True)
+    # Retour fournisseur d'un produit défectueux : ligne client d'origine.
+    defective_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("return_lines.id"), default=None, index=True
+    )
+
+    @property
+    def total_cents(self) -> int:
+        return self.unit_price_cents * self.quantity
+
+    def __repr__(self) -> str:
+        return f"<ReturnLine display_id={self.display_id} qty={self.quantity}>"

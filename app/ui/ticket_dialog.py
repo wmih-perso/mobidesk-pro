@@ -27,11 +27,13 @@ class TicketPreviewDialog(FramelessDialog):
         batch_id: int | None = None,
         movement_id: int | None = None,
         parent=None,
+        return_id: int | None = None,
     ) -> None:
         super().__init__(parent)
         self.setMinimumWidth(360)
         self._batch_id = batch_id
         self._movement_id = movement_id
+        self._return_id = return_id
         self._data: dict | None = None
         self._build_ui()
         self._load()
@@ -45,7 +47,7 @@ class TicketPreviewDialog(FramelessDialog):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._make_header(
-            "🖨  Ticket de caisse",
+            "🖨  Bon de retour" if self._return_id is not None else "🖨  Ticket de caisse",
             gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #374151,stop:1 #1e3a5f)",
             height=54,
         ))
@@ -112,7 +114,12 @@ class TicketPreviewDialog(FramelessDialog):
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
-        self._data = _collect_ticket_data(self._batch_id, self._movement_id)
+        if self._return_id is not None:
+            from app.printing import collect_return_data
+
+            self._data = collect_return_data(self._return_id)
+        else:
+            self._data = _collect_ticket_data(self._batch_id, self._movement_id)
         if self._data:
             self._browser.setHtml(self._render_html())
         else:
@@ -138,7 +145,7 @@ class TicketPreviewDialog(FramelessDialog):
             )
 
         remise_html = ""
-        ttc_label = "TOTAL"
+        ttc_label = d.get("total_label") or "TOTAL"
         if d.get("remise_cents", 0) > 0:
             remise_html = f"""
   <table width="100%" style="font-size:10px;margin:2px 0;">
@@ -146,7 +153,7 @@ class TicketPreviewDialog(FramelessDialog):
     <tr><td style="color:#dc2626;">REMISE :</td><td style="text-align:right;color:#dc2626;">- {_da(d['remise_cents'])} DA</td></tr>
   </table>
   <hr style="border:none;border-top:1px solid #1a1a1a;margin:3px 0;">"""
-            ttc_label = "TTC À PAYER"
+            ttc_label = d.get("total_label") or "TTC À PAYER"
 
         solde_html = ""
         if d.get("has_reseller") and d.get("versement_cents", -1) >= 0:
@@ -166,9 +173,32 @@ class TicketPreviewDialog(FramelessDialog):
         if d.get("reseller_name"):
             client_block = f"""
   <div style="border:1px dashed #888;border-radius:3px;padding:4px 6px;margin:6px 0;">
-    <p style="margin:0;font-weight:bold;font-size:11px;">&#9658; Client : {d['reseller_name']}</p>
+    <p style="margin:0;font-weight:bold;font-size:11px;">&#9658; {d.get('contact_label', 'Client')} : {d['reseller_name']}</p>
     {"<p style='margin:1px 0;font-size:10px;color:#555;'>&#9990; " + d['reseller_phone'] + "</p>" if d.get('reseller_phone') else ""}
   </div>"""
+
+        title_html = ""
+        return_html = ""
+        if d.get("doc_title"):
+            origin = (
+                f"<p style='text-align:center;font-size:9px;margin:1px 0;'>"
+                f"Ticket d'origine : #{d['source_ticket']:06d}</p>"
+                if d.get("source_ticket") else ""
+            )
+            title_html = (
+                f"<p style='text-align:center;font-weight:bold;font-size:13px;margin:4px 0 1px;'>"
+                f"{d['doc_title']}</p>{origin}"
+            )
+            rows = "".join(
+                f"<tr><td>{label}</td><td style='text-align:right;'>{value}</td></tr>"
+                for label, value in d.get("balance_rows", [])
+            )
+            return_html = (
+                "<hr style='border:none;border-top:1px dashed #888;margin:6px 0 3px;'>"
+                "<table width='100%' style='font-size:10px;'>"
+                f"<tr><td>Règlement :</td><td style='text-align:right;'>{d.get('settlement_label', '')}</td></tr>"
+                f"{rows}</table>"
+            )
 
         cashier_line = (
             f"<p style='margin:2px 0;font-size:10px;color:#555;'>Caissier : {d['cashier_name']}</p>"
@@ -185,6 +215,7 @@ class TicketPreviewDialog(FramelessDialog):
   <p style="text-align:center;font-weight:bold;font-size:11px;margin:2px 0 6px;">&#9990; {STORE_PHONE}</p>
 
   <hr style="border:none;border-top:1.5px solid #1a1a1a;border-bottom:1px solid #1a1a1a;margin:6px 0 4px;">
+  {title_html}
 
   <table width="100%" style="margin:2px 0;"><tr>
     <td style="font-size:11px;">N&#176; <b>#{d['ticket_num']:06d}</b></td>
@@ -222,6 +253,7 @@ class TicketPreviewDialog(FramelessDialog):
   </div>
 
   {solde_html}
+  {return_html}
 
   <hr style="border:none;border-top:1px dashed #888;margin:6px 0;">
   <p style="text-align:center;font-weight:bold;font-size:10px;margin:4px 0 1px;">

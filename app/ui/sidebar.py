@@ -97,8 +97,8 @@ class Sidebar(QWidget):
         self._add_nav(layout, "ventes", "Ventes")
         self._add_nav(layout, "historique", "Historique")
         self._add_nav(layout, "profit", "Bénéfices")
-        self._add_nav(layout, "resellers", "Revendeurs")
-        self._add_nav(layout, "suppliers", "Fournisseurs")
+        self._add_nav(layout, "returns", "Retours")
+        self._add_nav(layout, "contacts", "Contacts")
         self._add_nav(layout, "categories", "Catégories")
         self._add_nav(layout, "settings", "Paramètres")
 

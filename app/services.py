@@ -393,6 +393,26 @@ def apply_stock_batch(
     return results, batch_id
 
 
+def _ensure_no_returns(session: Session, movements: list[StockMovement]) -> None:
+    """Refuse de modifier une opération liée à un bon de retour : le bon
+    pointe vers ces mouvements (quantités et prix d'origine)."""
+    from app.models import ReturnLine
+
+    if any(m.return_id is not None for m in movements):
+        raise StockError(
+            "Ce mouvement provient d'un bon de retour : il ne peut pas être modifié."
+        )
+    has_returns = session.scalar(
+        select(ReturnLine.id)
+        .where(ReturnLine.origin_movement_id.in_([m.id for m in movements]))
+        .limit(1)
+    )
+    if has_returns is not None:
+        raise StockError(
+            "Des retours ont déjà été faits sur cette opération : elle ne peut plus être modifiée."
+        )
+
+
 def cancel_movement_batch(session: Session, batch_id: int | None = None, movement_id: int | None = None) -> None:
     """Annule tous les mouvements d'un lot (movement_batch_id).
 
@@ -419,6 +439,7 @@ def cancel_movement_batch(session: Session, batch_id: int | None = None, movemen
         raise StockError("batch_id ou movement_id requis.")
     if not movements:
         raise StockError("Mouvement introuvable.")
+    _ensure_no_returns(session, movements)
 
     for mvt in movements:
         display = get_display(session, mvt.display_id)
@@ -560,211 +581,6 @@ def list_sales(
     return list(session.scalars(stmt).all())
 
 
-def create_return(
-    session: Session,
-    *,
-    display_id: int,
-    quantity: int,
-    return_type: str,
-    reseller_id: int | None = None,
-    supplier_id: int | None = None,
-    note: str = "",
-    linked_batch_id: int | None = None,
-) -> StockMovement:
-    """Crée un mouvement de retour.
-
-    return_type='received'  → retour reçu du revendeur/client (stock +)
-    return_type='supplier'  → retour envoyé au fournisseur (stock -)
-    """
-    if quantity <= 0:
-        raise StockError("La quantité doit être supérieure à 0.")
-
-    display = get_display(session, display_id)
-
-    if return_type == "received":
-        change = +quantity
-        reason = "Retour reçu" + (f" — {note}" if note else "")
-    else:
-        change = -quantity
-        reason = "Retour fournisseur" + (f" — {note}" if note else "")
-        if display.quantity < quantity:
-            raise StockError(
-                f"Stock insuffisant : {display.quantity} disponible(s), "
-                f"{quantity} demandé(s)."
-            )
-
-    before = display.quantity
-    display.quantity += change
-    after = display.quantity
-
-    mvt = StockMovement(
-        display_id=display_id,
-        change_quantity=change,
-        quantity_before=before,
-        quantity_after=after,
-        reason=reason,
-        is_sale=False,
-        reseller_id=reseller_id if return_type == "received" else None,
-        supplier_id=supplier_id if return_type == "supplier" else None,
-        linked_batch_id=linked_batch_id,
-    )
-    session.add(mvt)
-    session.flush()
-    return mvt
-
-
-def create_replacement(
-    session: Session,
-    *,
-    display_id: int,
-    quantity: int,
-    supplier_id: int | None = None,
-    linked_return_batch_id: int | None = None,
-) -> StockMovement:
-    """Crée une entrée stock de remplacement fournisseur (échange sans paiement).
-
-    Le lot FIFO est créé au prix d'achat courant du produit — le remplacement
-    est comptabilisé au même coût que l'achat d'origine pour préserver les
-    marges. Le prix d'achat du produit n'est PAS mis à jour (pas de nouveau
-    paiement).
-    """
-    if quantity <= 0:
-        raise StockError("La quantité doit être supérieure à 0.")
-    if linked_return_batch_id is not None and has_replacement(session, linked_return_batch_id):
-        raise StockError("Ce retour a déjà été résolu.")
-    display = get_display(session, display_id)
-    before = display.quantity
-    display.quantity += quantity
-    after = display.quantity
-
-    batch_price = display.purchase_price_cents
-    next_batch_id = (session.scalar(select(func.max(StockMovement.movement_batch_id))) or 0) + 1
-
-    session.add(StockBatch(
-        display_id=display_id,
-        quantity_original=quantity,
-        quantity_remaining=quantity,
-        unit_purchase_price_cents=batch_price,
-        supplier_id=supplier_id,
-        movement_batch_id=next_batch_id,
-    ))
-
-    mvt = StockMovement(
-        display_id=display_id,
-        change_quantity=quantity,
-        quantity_before=before,
-        quantity_after=after,
-        reason="Remplacement fournisseur",
-        is_sale=False,
-        supplier_id=supplier_id,
-        movement_batch_id=next_batch_id,
-        linked_batch_id=linked_return_batch_id,
-    )
-    session.add(mvt)
-    session.flush()
-    return mvt
-
-
-def has_replacement(session: Session, return_batch_id: int) -> bool:
-    """Indique si le retour fournisseur a été résolu (remplacement ou remboursement)."""
-    stmt = select(StockMovement.id).where(
-        StockMovement.linked_batch_id == return_batch_id,
-        StockMovement.reason.like("Remplacement%") | StockMovement.reason.like("Remboursement%"),
-    ).limit(1)
-    return session.scalar(stmt) is not None
-
-
-def create_refund_resolution(
-    session: Session,
-    *,
-    display_id: int,
-    linked_return_batch_id: int,
-    supplier_id: int | None = None,
-    note: str = "",
-) -> StockMovement:
-    """Enregistre un remboursement fournisseur (sans mouvement de stock).
-
-    Un mouvement à change_quantity=0 sert de marqueur de résolution —
-    le stock n'est pas modifié car le produit a déjà quitté le stock
-    lors du retour fournisseur.
-    """
-    if has_replacement(session, linked_return_batch_id):
-        raise StockError("Ce retour a déjà été résolu.")
-    display = get_display(session, display_id)
-    mvt = StockMovement(
-        display_id=display_id,
-        change_quantity=0,
-        quantity_before=display.quantity,
-        quantity_after=display.quantity,
-        reason="Remboursement fournisseur" + (f" — {note}" if note else ""),
-        is_sale=False,
-        supplier_id=supplier_id,
-        linked_batch_id=linked_return_batch_id,
-    )
-    session.add(mvt)
-    session.flush()
-    return mvt
-
-
-def list_returns_for_batch(
-    session: Session,
-    batch_id: int,
-) -> list[StockMovement]:
-    """Retours liés à un lot de vente ou d'achat (via linked_batch_id)."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-    stmt = (
-        select(StockMovement)
-        .options(selectinload(StockMovement.display))
-        .where(StockMovement.linked_batch_id == batch_id)
-        .order_by(StockMovement.created_at)
-    )
-    return list(session.scalars(stmt).all())
-
-
-def list_returns(
-    session: Session,
-    *,
-    search: str = "",
-    date_from: datetime.datetime | None = None,
-    date_to: datetime.datetime | None = None,
-    return_type_filter: str = "all",
-) -> list[StockMovement]:
-    """Mouvements de retour (motif commence par 'Retour')."""
-    stmt = (
-        select(StockMovement)
-        .options(
-            selectinload(StockMovement.display),
-            selectinload(StockMovement.reseller),
-            selectinload(StockMovement.supplier),
-        )
-        .where(StockMovement.reason.like("Retour%"))
-        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
-    )
-    if date_from:
-        stmt = stmt.where(StockMovement.created_at >= date_from)
-    if date_to:
-        stmt = stmt.where(StockMovement.created_at <= date_to)
-    if return_type_filter == "received":
-        stmt = stmt.where(StockMovement.change_quantity > 0)
-    elif return_type_filter == "supplier":
-        stmt = stmt.where(StockMovement.change_quantity < 0)
-
-    movements = list(session.scalars(stmt).all())
-
-    if search:
-        s = search.lower()
-        movements = [
-            m for m in movements
-            if s in (m.display.reference or "").lower()
-            or s in f"{m.display.brand} {m.display.phone_model}".lower()
-            or s in (m.reseller.name if m.reseller else "").lower()
-            or s in (m.supplier.name if m.supplier else "").lower()
-        ]
-
-    return movements
-
-
 def list_sale_batches(
     session: Session,
     *,
@@ -841,42 +657,25 @@ def sum_return_deduction_cents(
     start: datetime.datetime | None = None,
     end: datetime.datetime | None = None,
 ) -> int:
-    """Bénéfice déduit par les retours reçus sur la période.
+    """Bénéfice annulé par les retours clients sur la période : pour chaque
+    produit rendu, la marge de la vente d'origine (prix de vente moins coût
+    d'achat figés sur le bon de retour — voir app/returns.py)."""
+    from app.models import ReturnDoc, ReturnLine
 
-    Pour chaque retour lié à une vente (linked_batch_id non nul), on retrouve
-    la vente originale afin d'utiliser les prix figés à l'époque de la vente
-    (pas les prix actuels du produit). Un retour sans linked_batch_id est ignoré
-    car on ne peut pas déterminer le prix de vente d'origine.
-    """
     stmt = (
-        select(StockMovement)
-        .where(
-            StockMovement.reason.like("Retour reçu%"),
-            StockMovement.linked_batch_id.is_not(None),
-            StockMovement.change_quantity > 0,
+        select(
+            func.sum(
+                (ReturnLine.unit_price_cents - ReturnLine.unit_cost_cents) * ReturnLine.quantity
+            )
         )
+        .join(ReturnDoc, ReturnLine.return_id == ReturnDoc.id)
+        .where(ReturnDoc.kind == "customer")
     )
     if start is not None:
-        stmt = stmt.where(StockMovement.created_at >= start)
+        stmt = stmt.where(ReturnDoc.created_at >= start)
     if end is not None:
-        stmt = stmt.where(StockMovement.created_at <= end)
-
-    returns = list(session.scalars(stmt).all())
-    total = 0
-    for ret in returns:
-        orig = session.scalar(
-            select(StockMovement)
-            .where(
-                StockMovement.movement_batch_id == ret.linked_batch_id,
-                StockMovement.display_id == ret.display_id,
-                StockMovement.is_sale.is_(True),
-            )
-            .limit(1)
-        )
-        if orig:
-            unit_profit = orig.unit_sale_price_cents - orig.unit_purchase_price_cents
-            total += unit_profit * abs(ret.change_quantity)
-    return total
+        stmt = stmt.where(ReturnDoc.created_at <= end)
+    return session.scalar(stmt) or 0
 
 
 def sum_profit_cents(

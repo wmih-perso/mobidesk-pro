@@ -120,6 +120,70 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
         }
 
 
+def collect_return_data(return_id: int) -> dict | None:
+    """Données d'un bon de retour, au format du ticket de caisse (voir
+    _render_ticket) avec en plus : titre, libellé du contact, libellé du
+    total, règlement et lignes de solde."""
+    from app.returns import SETTLEMENT_LABELS, contact_name, get_return
+    from app.services import StockError
+
+    with session_scope() as session:
+        try:
+            doc = get_return(session, return_id)
+        except StockError:
+            return None
+        is_customer = doc.kind == "customer"
+        contact = doc.reseller if is_customer else doc.supplier
+        lines = []
+        for line in doc.lines:
+            label = line.display.reference
+            if line.condition == "defective":
+                label += " (déf.)"
+            lines.append({
+                "label": label,
+                "category": line.display.category or "",
+                "reference": label,
+                "qty": line.quantity,
+                "unit_cents": line.unit_price_cents,
+                "total_cents": line.total_cents,
+            })
+
+        balance_rows = []
+        if contact is not None and doc.settlement != "legacy":
+            balance_rows = [
+                ("Anc. solde :", format_balance_ticket(doc.balance_before_cents)),
+                ("Nouv. solde :", format_balance_ticket(doc.balance_after_cents)),
+            ]
+        if doc.settlement == "exchange":
+            total_label = "ÉCHANGE"
+        elif is_customer:
+            total_label = "REMBOURSÉ" if doc.settlement == "cash" else "AVOIR"
+        else:
+            total_label = "TOTAL"
+
+        return {
+            "doc_title": "BON DE RETOUR" + ("" if is_customer else " FOURNISSEUR"),
+            "ticket_num": doc.id,
+            "date_str": doc.created_at.strftime("%d/%m/%Y  %H:%M"),
+            "lines": lines,
+            "total_brut_cents": doc.amount_cents,
+            "remise_cents": 0,
+            "total_cents": doc.amount_cents,
+            "total_label": total_label,
+            "nb_articles": len(lines),
+            "nb_pieces": sum(l["qty"] for l in lines),
+            "reseller_name": contact_name(doc),
+            "reseller_phone": contact.phone if contact else "",
+            "contact_label": "Client" if is_customer else "Fournisseur",
+            "cashier_name": doc.cashier_name,
+            "settlement_label": SETTLEMENT_LABELS.get(doc.settlement, ""),
+            "source_ticket": doc.source_batch_id,
+            "balance_rows": balance_rows,
+            "has_reseller": False,
+            "has_supplier": False,
+        }
+
+
 def print_sale_ticket(
     batch_id: int | None = None,
     movement_id: int | None = None,
@@ -202,6 +266,13 @@ def _render_ticket(printer: QPrinter, data: dict) -> None:
         draw(f"☎ {STORE_PHONE}", 13, bold=True, align=Qt.AlignmentFlag.AlignCenter)
         double_rule()
 
+        if data.get("doc_title"):
+            draw(data["doc_title"], 14, bold=True, align=Qt.AlignmentFlag.AlignCenter)
+            if data.get("source_ticket"):
+                draw(f"Ticket d'origine : #{data['source_ticket']:06d}", 10,
+                     align=Qt.AlignmentFlag.AlignCenter)
+            hline(gap=3)
+
         # ── Infos ticket ─────────────────────────────────────────────────
         h_row = lh(13)
         f13 = QFont("Courier New", 13)
@@ -227,7 +298,8 @@ def _render_ticket(printer: QPrinter, data: dict) -> None:
             painter.drawRoundedRect(QRect(0, y, W, lh(13) + (lh(11) if data.get("reseller_phone") else 0) + 8), 4, 4)
             painter.setPen(QPen(Qt.GlobalColor.black, 1))
             y += 4
-            draw(f"▸ Client : {data['reseller_name']}", 13, bold=True, x0=4, w=W - 8)
+            contact_label = data.get("contact_label", "Client")
+            draw(f"▸ {contact_label} : {data['reseller_name']}", 13, bold=True, x0=4, w=W - 8)
             if data.get("reseller_phone"):
                 draw(f"☎ {data['reseller_phone']}", 11, x0=4, w=W - 8)
             y += 4
@@ -326,7 +398,8 @@ def _render_ticket(printer: QPrinter, data: dict) -> None:
         painter.setFont(f_tot)
         painter.drawText(QRect(6, y, W // 2, h_tot),
                          Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
-                         "TTC À PAYER" if data.get("remise_cents", 0) > 0 else "TOTAL")
+                         data.get("total_label")
+                         or ("TTC À PAYER" if data.get("remise_cents", 0) > 0 else "TOTAL"))
         painter.drawText(QRect(W // 2, y, W // 2 - 6, h_tot),
                          Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
                          f"{_da(data['total_cents'])} DA")
@@ -354,6 +427,16 @@ def _render_ticket(printer: QPrinter, data: dict) -> None:
             right_row("Versement :", f"{_da(data['supplier_versement_cents'])} DA")
             hline(gap=3)
             right_row("Nouv. solde four. :", format_balance_ticket(data['supplier_balance_after_cents']), bold_val=True)
+            y += 4
+
+        # ── Règlement et solde d'un bon de retour ─────────────────────────
+        if data.get("doc_title"):
+            hline(dashed=True, gap=4)
+            if data.get("settlement_label"):
+                right_row("Règlement :", data["settlement_label"], pt=10)
+            for label, value in data.get("balance_rows", []):
+                draw(label, 10)
+                draw(value, 11, bold=label.startswith("Nouv"), align=Qt.AlignmentFlag.AlignRight)
             y += 4
 
         # ── Pied ──────────────────────────────────────────────────────────

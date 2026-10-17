@@ -42,7 +42,6 @@ from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, field_label
 
 # Motifs proposés pour un ajustement de stock (ni achat, ni vente).
 ADJUSTMENT_REASONS = [
-    "Retour client",
     "Correction d'inventaire",
     "Produit endommagé",
     "Produit perdu",

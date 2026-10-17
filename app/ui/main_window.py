@@ -56,6 +56,7 @@ from app.ui.display_dialog import DisplayDialog
 from app.ui.history_page import HistoriquePage
 from app.ui.profit_tab import ProfitTab
 from app.ui.resellers_panel import ResellersPanel
+from app.ui.returns_page import ReturnsPage
 from app.ui.sale_dialog import SaleDialog
 from app.ui.sale_page import SalePage
 from app.ui.sidebar import Sidebar
@@ -189,13 +190,16 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.sale_page)
         self.stack.addWidget(self._build_stock_page())       # index 1
         self.historique_page = HistoriquePage()              # index 2
+        self.historique_page.stock_changed.connect(self.refresh)
         self.stack.addWidget(self.historique_page)
         self.profit_tab = ProfitTab()                        # index 3
         self.stack.addWidget(self.profit_tab)
         self.stack.addWidget(self._build_settings_page())   # index 4
-        self.stack.addWidget(self._build_resellers_page())  # index 5
+        self.stack.addWidget(self._build_contacts_page())   # index 5
         self.stack.addWidget(self._build_categories_page()) # index 6
-        self.stack.addWidget(self._build_suppliers_page())  # index 7
+        self.returns_page = ReturnsPage()                    # index 7
+        self.returns_page.stock_changed.connect(self.refresh)
+        self.stack.addWidget(self.returns_page)
         self.users_panel = UsersPanel()                      # index 8
         self.stack.addWidget(self.users_panel)
 
@@ -249,8 +253,8 @@ class MainWindow(QMainWindow):
             ("list",      "Historique",    "#f57c00", "historique"),
             ("coin",      "Bénéfices",     "#2563eb", "profit"),
             ("home",      "Vente comptoir","#43a047", "sale"),
-            ("users",     "Clients",       "#1976d2", "resellers"),
-            ("download",  "Fournisseurs",  "#e64a19", "suppliers"),
+            ("users",     "Contacts",      "#1976d2", "contacts"),
+            ("download",  "Retours",       "#e64a19", "returns"),
             ("tag",       "Catégories",    "#00acc1", "categories"),
             ("gear",      "Paramètres",    "#546e7a", "settings"),
         ]
@@ -795,15 +799,28 @@ class MainWindow(QMainWindow):
         page_layout.addWidget(scroll)
         return page
 
-    def _build_resellers_page(self) -> QWidget:
+    def _build_contacts_page(self) -> QWidget:
+        """Revendeurs et fournisseurs réunis dans un seul onglet « Contacts »."""
         self.resellers_contacts_page = ContactsPage("resellers")
         self.resellers_contacts_page.stock_changed.connect(self.refresh)
-        return self.resellers_contacts_page
-
-    def _build_suppliers_page(self) -> QWidget:
         self.suppliers_contacts_page = ContactsPage("suppliers")
         self.suppliers_contacts_page.stock_changed.connect(self.refresh)
-        return self.suppliers_contacts_page
+
+        self.contacts_tabs = QTabWidget()
+        self.contacts_tabs.setStyleSheet(
+            "QTabWidget::pane { border: none; background: #f5f5f5; }"
+            "QTabBar::tab { background: #eeeeee; color: #616161; border: 1px solid #e0e0e0; "
+            "border-bottom: none; padding: 10px 22px; border-radius: 6px 6px 0 0; font-weight: 600; margin-right: 2px; }"
+            "QTabBar::tab:hover { background: #eff6ff; color: #1e40af; }"
+            "QTabBar::tab:selected { background: #2563eb; color: white; border-color: #2563eb; }"
+        )
+        self.contacts_tabs.addTab(self.resellers_contacts_page, "👥  Revendeurs")
+        self.contacts_tabs.addTab(self.suppliers_contacts_page, "🚚  Fournisseurs")
+        self.contacts_tabs.currentChanged.connect(lambda _i: self._refresh_contacts())
+        return self.contacts_tabs
+
+    def _refresh_contacts(self) -> None:
+        self.contacts_tabs.currentWidget().refresh()
 
     def _build_categories_page(self) -> QWidget:
         page = QWidget()
@@ -1228,11 +1245,16 @@ class MainWindow(QMainWindow):
             self.sidebar.select_page(self._active_nav_key())
         elif page_key == "settings":
             self.stack.setCurrentIndex(4)
-        elif page_key == "resellers":
+        elif page_key in ("contacts", "resellers", "suppliers"):
+            if page_key != "contacts":
+                self.contacts_tabs.setCurrentIndex(0 if page_key == "resellers" else 1)
+            self._refresh_contacts()
             self.stack.setCurrentIndex(5)
+            self.sidebar.select_page("contacts")
         elif page_key == "categories":
             self.stack.setCurrentIndex(6)
-        elif page_key == "suppliers":
+        elif page_key == "returns":
+            self.returns_page.refresh()
             self.stack.setCurrentIndex(7)
         elif page_key == "accounts":
             self.users_panel.refresh()
@@ -1257,11 +1279,11 @@ class MainWindow(QMainWindow):
         if idx == 4:
             return "settings"
         if idx == 5:
-            return "resellers"
+            return "contacts"
         if idx == 6:
             return "categories"
         if idx == 7:
-            return "suppliers"
+            return "returns"
         if idx == 8:
             return "accounts"
         return "stock"
@@ -1279,9 +1301,9 @@ class MainWindow(QMainWindow):
         # Forcer aussi le rafraîchissement des pages contacts actives
         idx = self.stack.currentIndex()
         if idx == 5:
-            self.resellers_contacts_page.refresh()
+            self._refresh_contacts()
         elif idx == 7:
-            self.suppliers_contacts_page.refresh()
+            self.returns_page.refresh()
 
     def refresh(self) -> None:
         self._refresh_displays()
@@ -1291,6 +1313,8 @@ class MainWindow(QMainWindow):
             self.historique_page.refresh()
         if self.stack.currentIndex() == 3:
             self.profit_tab.refresh()
+        if self.stack.currentIndex() == 7:
+            self.returns_page.refresh()
 
     def _refresh_displays(self) -> None:
         with session_scope() as session:

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -61,14 +60,10 @@ class _ModernCombo(QComboBox):
 from app.database import session_scope
 from app.money import format_da
 from app.ui.frameless_dialog import FramelessDialog
+from app.returns import list_returns_for_batch, returned_qty_for_batch
 from app.services import (
     count_movements,
-    create_refund_resolution,
-    create_replacement,
-    has_replacement,
     list_movements,
-    list_returns,
-    list_returns_for_batch,
     list_sale_batches,
 )
 from app.ui.widgets import apply_card_shadow
@@ -89,62 +84,9 @@ def _fmt_date(dt: datetime.datetime) -> str:
 # Popup détail vente
 # ──────────────────────────────────────────────────────────────────────────────
 
-class _ReturnQtyDialog(FramelessDialog):
-    """Mini dialog pour saisir la quantité à retourner."""
-
-    def __init__(self, max_qty: int, product_name: str, parent=None) -> None:
-        super().__init__(parent)
-        self.setMinimumSize(340, 200)
-        self.setModal(True)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._make_header("Quantité à retourner", height=52))
-        _body = QWidget()
-        _body.setStyleSheet("background: white;")
-        layout = QVBoxLayout(_body)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(12)
-        root.addWidget(_body)
-
-        lbl = QLabel(f"Retourner  <b>{product_name}</b>")
-        lbl.setWordWrap(True)
-        layout.addWidget(lbl)
-
-        from app.ui.widgets import ModernSpinBox
-        self.qty = ModernSpinBox()
-        self.qty.setRange(1, max_qty)
-        self.qty.setValue(1)
-        layout.addWidget(self.qty)
-
-        hint = QLabel(f"Maximum : {max_qty}")
-        hint.setStyleSheet("color: #9ca3af; font-size: 11px;")
-        layout.addWidget(hint)
-
-        btn_row = QHBoxLayout()
-        cancel = QPushButton("✕  Annuler")
-        cancel.setFixedHeight(36)
-        cancel.setStyleSheet(
-            "QPushButton { background: #ffffff; color: #424242; border: 1px solid #bdbdbd;"
-            " border-radius: 6px; font-weight: 600; padding: 0 14px; }"
-            "QPushButton:hover { background: #f5f5f5; border-color: #9e9e9e; }"
-        )
-        cancel.clicked.connect(self.reject)
-        btn_row.addWidget(cancel)
-        btn_row.addStretch()
-        ok = QPushButton("Confirmer")
-        ok.setStyleSheet(
-            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
-            "padding: 8px 18px; font-weight: 700; }"
-            "QPushButton:hover { background: #1d4ed8; }"
-        )
-        ok.clicked.connect(self.accept)
-        btn_row.addWidget(ok)
-        layout.addLayout(btn_row)
-
-
 class SaleBatchDetailDialog(FramelessDialog):
-    """Détail d'une vente : liste des produits + boutons retour par ligne."""
+    """Détail d'une vente : produits, quantités déjà rendues, et accès au
+    retour (fenêtre CustomerReturnDialog, ouverte sur cette vente)."""
 
     def __init__(self, batch: dict, parent=None) -> None:
         super().__init__(parent)
@@ -152,6 +94,7 @@ class SaleBatchDetailDialog(FramelessDialog):
         self.setMinimumSize(700, 420)
         self.setModal(True)
         self._batch = batch
+        self.changed = False
         self._build_ui(batch)
 
     def _build_ui(self, batch: dict) -> None:
@@ -190,10 +133,10 @@ class SaleBatchDetailDialog(FramelessDialog):
             bar.setStyleSheet("background: #2d2d44; color: #9ca3af; padding: 6px 20px; font-size: 12px;")
             layout.addWidget(bar)
 
-        # Tableau avec colonne retour
+        # Tableau avec colonne des quantités rendues
         movements = batch["movements"]
         table = QTableWidget(len(movements), 6)
-        table.setHorizontalHeaderLabels(["Référence", "Désignation", "Qté", "Prix U.", "Montant", ""])
+        table.setHorizontalHeaderLabels(["Référence", "Désignation", "Qté", "Prix U.", "Montant", "Rendu"])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
@@ -222,44 +165,16 @@ class SaleBatchDetailDialog(FramelessDialog):
         table.setColumnWidth(4, 120)
         table.setColumnWidth(5, 120)
 
-        # prix de vente par produit (pour calcul montant retourné)
-        self._sale_price: dict[int, int] = {}
-        # quantité vendue par produit (pour limite retour)
-        self._sold_qty: dict[int, int] = {}
-        # référence boutons retour par display_id
-        self._ret_btns: dict[int, QPushButton] = {}
-
+        self._table = table
         for i, m in enumerate(movements):
             ref = m.display.reference if m.display else "—"
             desc = f"{m.display.brand} {m.display.phone_model}".strip() if m.display else "—"
             qty = abs(m.change_quantity)
-            self._sale_price[m.display_id] = m.unit_sale_price_cents
-            self._sold_qty[m.display_id] = qty
             table.setItem(i, 0, QTableWidgetItem(ref))
             table.setItem(i, 1, QTableWidgetItem(desc))
             _right(table, i, 2, str(qty))
             _right(table, i, 3, format_da(m.unit_sale_price_cents))
             _right(table, i, 4, format_da(m.unit_sale_price_cents * qty))
-
-            ret_btn = QPushButton("↩  Retour")
-            ret_btn.setStyleSheet(
-                "QPushButton { background: #fff3e0; color: #e65100; border: 1px solid #ffcc02; "
-                "border-radius: 5px; padding: 5px 10px; font-weight: 700; font-size: 12px; }"
-                "QPushButton:hover { background: #ffe0b2; }"
-            )
-            d_id = m.display_id
-            r_id = m.reseller_id
-            ret_btn.clicked.connect(
-                lambda _c, did=d_id, rid=r_id, name=f"{ref} — {desc}":
-                    self._do_return(did, rid, name)
-            )
-            self._ret_btns[d_id] = ret_btn
-            w = QWidget()
-            w.setStyleSheet("background: transparent;")
-            wl = QHBoxLayout(w)
-            wl.setContentsMargins(6, 4, 6, 4)
-            wl.addWidget(ret_btn)
-            table.setCellWidget(i, 5, w)
 
         layout.addWidget(table, stretch=1)
 
@@ -289,6 +204,14 @@ class SaleBatchDetailDialog(FramelessDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(16, 10, 16, 14)
+        self._return_btn = QPushButton("↩  Faire un retour")
+        self._return_btn.setStyleSheet(
+            "QPushButton { background: #fff3e0; color: #e65100; border: 1px solid #ffcc02; "
+            "border-radius: 6px; padding: 8px 14px; font-weight: 700; font-size: 12px; }"
+            "QPushButton:hover { background: #ffe0b2; }"
+        )
+        self._return_btn.clicked.connect(self._do_return)
+        btn_row.addWidget(self._return_btn)
         btn_row.addStretch()
         close_btn = QPushButton("Fermer")
         close_btn.setObjectName("SecondaryButton")
@@ -303,99 +226,53 @@ class SaleBatchDetailDialog(FramelessDialog):
         batch_id = self._batch["batch_id"]
         total = self._batch["total_cents"]
         with session_scope() as session:
-            rets = list_returns_for_batch(session, batch_id)
+            returned = returned_qty_for_batch(session, batch_id)
+            docs = list_returns_for_batch(session, batch_id, "customer")
+            doc_lines = [
+                (doc.id, line.quantity, line.display.reference, line.condition)
+                for doc in docs for line in doc.lines
+            ]
+            returned_cents = sum(doc.amount_cents for doc in docs)
 
-        # quantité déjà retournée par produit (retours reçus seulement, change > 0)
-        returned_qty_by_product: dict[int, int] = {}
-        for r in rets:
-            if r.change_quantity > 0:  # retour reçu = stock remonte
-                did = r.display_id
-                returned_qty_by_product[did] = returned_qty_by_product.get(did, 0) + abs(r.change_quantity)
+        movements = self._batch["movements"]
+        for i, m in enumerate(movements):
+            already = returned.get(m.id, 0)
+            _right(self._table, i, 5, str(already) if already else "—")
+        remaining = sum(abs(m.change_quantity) - returned.get(m.id, 0) for m in movements)
+        self._return_btn.setEnabled(remaining > 0)
+        if remaining == 0:
+            self._return_btn.setText("✓ Tout a été rendu")
 
-        # mettre à jour les boutons retour
-        for d_id, btn in self._ret_btns.items():
-            sold = self._sold_qty.get(d_id, 0)
-            already = returned_qty_by_product.get(d_id, 0)
-            available = max(0, sold - already)
-            if available == 0:
-                btn.setText("✓ Retourné")
-                btn.setEnabled(False)
-                btn.setStyleSheet(
-                    "QPushButton { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; "
-                    "border-radius: 5px; padding: 5px 10px; font-weight: 700; font-size: 12px; }"
-                )
-            else:
-                btn.setText(f"↩  Retour ({available})")
-                btn.setEnabled(True)
-                btn.setStyleSheet(
-                    "QPushButton { background: #fff3e0; color: #e65100; border: 1px solid #ffcc02; "
-                    "border-radius: 5px; padding: 5px 10px; font-weight: 700; font-size: 12px; }"
-                    "QPushButton:hover { background: #ffe0b2; }"
-                )
-
-        if not rets:
+        if not doc_lines:
             self._returns_section.setVisible(False)
             self._total_label.setText(format_da(total))
             self._total_label.setStyleSheet("font-weight: 800; font-size: 15px; color: #2563eb;")
             return
 
-        # montant retourné = qty × prix de vente d'origine
-        returned_cents = sum(
-            abs(r.change_quantity) * self._sale_price.get(r.display_id, 0)
-            for r in rets if r.change_quantity > 0
-        )
-        lines = []
-        for r in rets:
-            ref = r.display.reference if r.display else "—"
-            qty = abs(r.change_quantity)
-            label = "Retour reçu" if r.change_quantity > 0 else "Retour fourn."
-            lines.append(f"  ↩ {label} : {qty} × {ref}")
-
+        lines = [
+            f"  ↩ Bon R{doc_id} : {qty} × {ref}" + ("  (défectueux)" if condition == "defective" else "")
+            for doc_id, qty, ref, condition in doc_lines
+        ]
         self._returns_lbl.setText(
-            "Retours déclarés :\n" + "\n".join(lines) +
+            "Retours :\n" + "\n".join(lines) +
             f"\n  Montant retourné : –{format_da(returned_cents)}"
         )
         self._returns_section.setVisible(True)
-        net = total - returned_cents
-        self._total_label.setText(f"{format_da(net)}  (net après retours)")
+        self._total_label.setText(f"{format_da(total - returned_cents)}  (net après retours)")
         self._total_label.setStyleSheet("font-weight: 800; font-size: 14px; color: #e65100;")
 
-    def _do_return(self, display_id: int, reseller_id: int | None, name: str) -> None:
-        # Calcule la quantité disponible à retourner en temps réel
-        with session_scope() as session:
-            rets = list_returns_for_batch(session, self._batch["batch_id"])
-        already = sum(
-            abs(r.change_quantity) for r in rets
-            if r.display_id == display_id and r.change_quantity > 0
-        )
-        max_qty = max(0, self._sold_qty.get(display_id, 0) - already)
-        if max_qty == 0:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Déjà retourné",
-                "Ce produit a déjà été entièrement retourné.")
+    def _do_return(self) -> None:
+        from app.ui.return_dialogs import CustomerReturnDialog
+
+        dialog = CustomerReturnDialog(batch_id=self._batch["batch_id"], parent=self)
+        if dialog.exec() != CustomerReturnDialog.DialogCode.Accepted:
             return
-        dlg = _ReturnQtyDialog(max_qty, name, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        qty = dlg.qty.value()
-        from app.database import session_scope as _ss
-        from app.services import StockError, create_return
-        from PySide6.QtWidgets import QMessageBox
-        try:
-            with _ss() as session:
-                create_return(
-                    session,
-                    display_id=display_id,
-                    quantity=qty,
-                    return_type="received",
-                    reseller_id=reseller_id,
-                    linked_batch_id=self._batch["batch_id"],
-                )
-            QMessageBox.information(self, "Retour enregistré",
-                f"Retour de {qty} × {name.split(' — ')[0]} enregistré.")
-            self._refresh_returns()
-        except StockError as e:
-            QMessageBox.warning(self, "Erreur", str(e))
+        self.changed = True
+        self._refresh_returns()
+        if dialog.return_id is not None:
+            from app.ui.ticket_dialog import TicketPreviewDialog
+
+            TicketPreviewDialog(return_id=dialog.return_id, parent=self).exec()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -411,6 +288,7 @@ class MovementDetailDialog(FramelessDialog):
         self.setMinimumSize(460, 320)
         self.setModal(True)
         self._row = row_data
+        self.changed = False
         self._build_ui(row_data)
 
     def _build_ui(self, d: dict) -> None:
@@ -467,7 +345,11 @@ class MovementDetailDialog(FramelessDialog):
         layout.addWidget(body, stretch=1)
 
         # Section retours liés (entrées stock seulement)
-        if d["direction"] == "Entrée" and d.get("display_id") and d.get("batch_id"):
+        is_purchase = (
+            d["direction"] == "Entrée" and d.get("supplier_id") and d.get("batch_id")
+            and d["reason"].startswith("Achat")
+        )
+        if is_purchase:
             self._ret_section = QWidget()
             self._ret_section.setStyleSheet("background: #fff8e1;")
             rs_l = QVBoxLayout(self._ret_section)
@@ -484,7 +366,7 @@ class MovementDetailDialog(FramelessDialog):
         btn_row.setContentsMargins(16, 10, 16, 14)
         btn_row.setSpacing(8)
 
-        if d["direction"] == "Entrée" and d.get("display_id"):
+        if is_purchase:
             ret_btn = QPushButton("📤  Retour fournisseur")
             ret_btn.setStyleSheet(
                 "QPushButton { background: #fff3e0; color: #e65100; border: 1px solid #ffcc02; "
@@ -503,50 +385,30 @@ class MovementDetailDialog(FramelessDialog):
         layout.addLayout(btn_row)
 
     def _refresh_supplier_returns(self) -> None:
-        batch_id = self._row.get("batch_id")
-        if not batch_id:
-            return
         with session_scope() as session:
-            rets = list_returns_for_batch(session, batch_id)
-        if not rets:
-            if hasattr(self, "_ret_section"):
-                self._ret_section.setVisible(False)
-            return
-        lines = []
-        for r in rets:
-            ref = r.display.reference if r.display else "—"
-            qty = abs(r.change_quantity)
-            lines.append(f"  ↩ Retour fournisseur : {qty} × {ref}")
-        if hasattr(self, "_ret_lbl"):
-            self._ret_lbl.setText("Retours fournisseur :\n" + "\n".join(lines))
-            self._ret_section.setVisible(True)
+            docs = list_returns_for_batch(session, self._row["batch_id"], "supplier")
+            lines = [
+                f"  ↩ Bon R{doc.id} : {line.quantity} × {line.display.reference}"
+                for doc in docs for line in doc.lines
+            ]
+        self._ret_section.setVisible(bool(lines))
+        self._ret_lbl.setText("Retours fournisseur :\n" + "\n".join(lines))
 
     def _do_supplier_return(self) -> None:
+        from app.ui.return_dialogs import SupplierReturnDialog
+
         d = self._row
-        name = f"{d['reference']} — {d['designation']}"
-        max_qty = d.get("qty_int", 1)
-        dlg = _ReturnQtyDialog(max_qty, name, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        dialog = SupplierReturnDialog(
+            supplier_id=d["supplier_id"], purchase_batch_id=d["batch_id"], parent=self
+        )
+        if dialog.exec() != SupplierReturnDialog.DialogCode.Accepted:
             return
-        qty = dlg.qty.value()
-        from app.database import session_scope as _ss
-        from app.services import StockError, create_return
-        from PySide6.QtWidgets import QMessageBox
-        try:
-            with _ss() as session:
-                create_return(
-                    session,
-                    display_id=d["display_id"],
-                    quantity=qty,
-                    return_type="supplier",
-                    supplier_id=d.get("supplier_id"),
-                    linked_batch_id=d.get("batch_id"),
-                )
-            QMessageBox.information(self, "Retour enregistré",
-                f"Retour fournisseur de {qty} × {d['reference']} enregistré.")
-            self._refresh_supplier_returns()
-        except StockError as e:
-            QMessageBox.warning(self, "Erreur", str(e))
+        self.changed = True
+        self._refresh_supplier_returns()
+        if dialog.return_id is not None:
+            from app.ui.ticket_dialog import TicketPreviewDialog
+
+            TicketPreviewDialog(return_id=dialog.return_id, parent=self).exec()
 
 
 def _right(table: QTableWidget, row: int, col: int, text: str) -> None:
@@ -618,6 +480,8 @@ class _FilterBar(QWidget):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class _SalesTab(QWidget):
+    changed = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._data: list[dict] = []
@@ -765,6 +629,9 @@ class _SalesTab(QWidget):
         if 0 <= row < len(self._data):
             dlg = SaleBatchDetailDialog(self._data[row], parent=self)
             dlg.exec()
+            if dlg.changed:
+                self.refresh()
+                self.changed.emit()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -772,6 +639,8 @@ class _SalesTab(QWidget):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class _MovementsTab(QWidget):
+    changed = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._rows: list[dict] = []
@@ -1007,392 +876,9 @@ class _MovementsTab(QWidget):
         if 0 <= row < len(self._rows):
             dlg = MovementDetailDialog(self._rows[row], parent=self)
             dlg.exec()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Dialog résolution retour fournisseur
-# ──────────────────────────────────────────────────────────────────────────────
-
-class _SupplierResolutionDialog(FramelessDialog):
-    """Choisir comment résoudre un retour fournisseur :
-    même produit / produit différent / remboursement."""
-
-    def __init__(self, return_row: dict, parent=None) -> None:
-        super().__init__(parent)
-        self._row = return_row
-        self.setWindowTitle("Résolution du retour fournisseur")
-        self.setMinimumSize(500, 420)
-        self.setModal(True)
-        self._mode = "same"          # same | refund
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setSpacing(0)
-        root.setContentsMargins(0, 0, 0, 0)
-
-        # Header draggable
-        hdr = QFrame()
-        hdr.setStyleSheet("background: #1a1a2e;")
-        hl = QHBoxLayout(hdr)
-        hl.setContentsMargins(20, 14, 12, 14)
-        t = QLabel(f"Résoudre le retour  —  {self._row['ref']}")
-        t.setStyleSheet("color: white; font-size: 14px; font-weight: 700;")
-        hl.addWidget(t)
-        hl.addStretch()
-        _close = QPushButton("✕")
-        _close.setObjectName("FramelessCloseBtn")
-        _close.setFixedSize(38, 38)
-        _close.setCursor(Qt.CursorShape.PointingHandCursor)
-        _close.clicked.connect(self.reject)
-        hl.addWidget(_close)
-        self._drag_header = hdr
-        hdr.mousePressEvent = self._header_mouse_press
-        hdr.mouseMoveEvent = self._header_mouse_move
-        hdr.mouseReleaseEvent = self._header_mouse_release
-        root.addWidget(hdr)
-
-        body = QWidget()
-        body.setStyleSheet("background: white;")
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(24, 20, 24, 16)
-        bl.setSpacing(14)
-
-        # 2 boutons de mode
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(8)
-        self._btn_same = QPushButton("📦  Même produit")
-        self._btn_refund = QPushButton("💰  Remboursement")
-        for btn in (self._btn_same, self._btn_refund):
-            btn.setCheckable(True)
-            mode_row.addWidget(btn)
-        self._btn_same.setChecked(True)
-        self._btn_same.clicked.connect(lambda: self._set_mode("same"))
-        self._btn_refund.clicked.connect(lambda: self._set_mode("refund"))
-        self._style_mode_btns()
-        bl.addLayout(mode_row)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e0e0e0;")
-        bl.addWidget(sep)
-
-        # Quantité (caché pour remboursement)
-        self._qty_section = QWidget()
-        qs_l = QVBoxLayout(self._qty_section)
-        qs_l.setContentsMargins(0, 0, 0, 0)
-        qs_l.setSpacing(6)
-        qs_l.addWidget(self._lbl("Quantité"))
-        from app.ui.widgets import ModernSpinBox
-        self.qty = ModernSpinBox()
-        self.qty.setRange(1, self._row["qty_int"])
-        self.qty.setValue(self._row["qty_int"])
-        self.qty.setFixedWidth(140)
-        qs_l.addWidget(self.qty)
-        bl.addWidget(self._qty_section)
-
-        # Note (remboursement)
-        self._note_section = QWidget()
-        ns_l = QVBoxLayout(self._note_section)
-        ns_l.setContentsMargins(0, 0, 0, 0)
-        ns_l.setSpacing(6)
-        ns_l.addWidget(self._lbl("Note (optionnel)"))
-        self._note = QLineEdit()
-        self._note.setPlaceholderText("Ex: virement reçu, avoir sur prochaine commande...")
-        ns_l.addWidget(self._note)
-        self._note_section.setVisible(False)
-        bl.addWidget(self._note_section)
-
-        self._err = QLabel("")
-        self._err.setStyleSheet("color: #dc2626; font-size: 12px;")
-        bl.addWidget(self._err)
-        bl.addStretch()
-        root.addWidget(body, stretch=1)
-
-        # Footer
-        footer = QWidget()
-        footer.setStyleSheet("background: #f8fafc; border-top: 1px solid #e2e8f0;")
-        fl = QHBoxLayout(footer)
-        fl.setContentsMargins(20, 12, 20, 12)
-        cancel = QPushButton("Annuler")
-        cancel.setObjectName("SecondaryButton")
-        cancel.setFixedWidth(100)
-        cancel.clicked.connect(self.reject)
-        fl.addWidget(cancel)
-        fl.addStretch()
-        self._confirm = QPushButton("✔  Confirmer")
-        self._confirm.setStyleSheet(
-            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
-            "padding: 10px 20px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #1e40af; }"
-        )
-        self._confirm.clicked.connect(self._on_confirm)
-        fl.addWidget(self._confirm)
-        root.addWidget(footer)
-
-    def _lbl(self, text: str) -> QLabel:
-        l = QLabel(text)
-        l.setStyleSheet("font-weight: 700; color: #374151; font-size: 13px;")
-        return l
-
-    def _style_mode_btns(self) -> None:
-        for btn, active in [
-            (self._btn_same, self._mode == "same"),
-            (self._btn_refund, self._mode == "refund"),
-        ]:
-            if active:
-                btn.setStyleSheet(
-                    "QPushButton { background: #2563eb; color: white; border: none; "
-                    "border-radius: 6px; padding: 9px 12px; font-weight: 700; font-size: 12px; }"
-                )
-            else:
-                btn.setStyleSheet(
-                    "QPushButton { background: #f5f5f5; color: #616161; border: 1px solid #e0e0e0; "
-                    "border-radius: 6px; padding: 9px 12px; font-weight: 600; font-size: 12px; }"
-                    "QPushButton:hover { background: #eff6ff; color: #1e40af; }"
-                )
-
-    def _set_mode(self, mode: str) -> None:
-        self._mode = mode
-        self._btn_same.setChecked(mode == "same")
-        self._btn_refund.setChecked(mode == "refund")
-        self._style_mode_btns()
-        self._qty_section.setVisible(mode == "same")
-        self._note_section.setVisible(mode == "refund")
-        self._err.setText("")
-
-    def _on_confirm(self) -> None:
-        self._err.setText("")
-        row = self._row
-        from app.services import StockError
-        from PySide6.QtWidgets import QMessageBox
-        try:
-            with session_scope() as session:
-                if self._mode == "same":
-                    create_replacement(
-                        session,
-                        display_id=row["display_id"],
-                        quantity=self.qty.value(),
-                        supplier_id=row.get("supplier_id"),
-                        linked_return_batch_id=row["batch_id"],
-                    )
-                    msg = f"{self.qty.value()} × {row['ref']} remis en stock."
-                else:
-                    create_refund_resolution(
-                        session,
-                        display_id=row["display_id"],
-                        linked_return_batch_id=row["batch_id"],
-                        supplier_id=row.get("supplier_id"),
-                        note=self._note.text().strip(),
-                    )
-                    msg = "Remboursement enregistré."
-            QMessageBox.information(self, "Résolution enregistrée", msg)
-            self.accept()
-        except StockError as e:
-            self._err.setText(str(e))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Onglet Suivi des retours
-# ──────────────────────────────────────────────────────────────────────────────
-
-class _ReturnsTab(QWidget):
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._rows: list[dict] = []
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
-
-        # Bouton créer un retour
-        btn_row = QHBoxLayout()
-        new_return_btn = QPushButton("↩  Déclarer un retour")
-        new_return_btn.setStyleSheet(
-            "QPushButton { background: #2563eb; color: white; border: none; border-radius: 6px; "
-            "padding: 9px 18px; font-weight: 700; font-size: 13px; }"
-            "QPushButton:hover { background: #1d4ed8; }"
-        )
-        new_return_btn.clicked.connect(self._on_new_return)
-        btn_row.addWidget(new_return_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        self._filters = _FilterBar([
-            ("Tous les retours", "all"),
-            ("Reçus (client/revendeur)", "received"),
-            ("Envoyés (fournisseur)", "supplier"),
-        ])
-        self._debounce = QTimer(self)
-        self._debounce.setSingleShot(True)
-        self._debounce.setInterval(300)
-        self._debounce.timeout.connect(self.refresh)
-        self._filters.search.textChanged.connect(lambda: self._debounce.start())
-        self._filters.type_combo.currentIndexChanged.connect(self.refresh)
-        self._filters.date_combo.currentIndexChanged.connect(self.refresh)
-        layout.addWidget(self._filters)
-
-        card = QFrame()
-        card.setObjectName("Card")
-        apply_card_shadow(card)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(0, 0, 0, 0)
-
-        COLS = ["Date", "Produit", "Désignation", "Type", "Qté", "Contact", "Note", ""]
-        self._table = QTableWidget(0, len(COLS))
-        self._table.setHorizontalHeaderLabels(COLS)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._table.setAlternatingRowColors(True)
-        self._table.setShowGrid(False)
-        self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(44)
-        self._table.setFrameShape(QFrame.Shape.NoFrame)
-        self._table.setStyleSheet(
-            "QTableWidget { background: white; alternate-background-color: #f8fdfc; }"
-            "QHeaderView::section { background: #2563eb; color: white; font-weight: 700; "
-            "padding: 8px 10px; border: none; border-right: 1px solid #1d4ed8; font-size: 12px; }"
-            "QHeaderView::section:last { border-right: none; }"
-            "QTableWidget::item { padding: 4px 10px; }"
-            "QTableWidget::item:selected { background: #bfdbfe; color: #212121; }"
-            "QTableWidget::item:hover { background: #eff6ff; }"
-        )
-        hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(0, 135)
-        self._table.setColumnWidth(1, 110)
-        self._table.setColumnWidth(3, 110)
-        self._table.setColumnWidth(4, 50)
-        self._table.setColumnWidth(5, 140)
-        self._table.setColumnWidth(6, 140)
-        self._table.setColumnWidth(7, 140)
-
-        card_layout.addWidget(self._table, stretch=1)
-
-        self._summary = QLabel("")
-        self._summary.setStyleSheet("color: #757575; font-size: 12px; padding: 6px 16px;")
-        card_layout.addWidget(self._summary)
-
-        layout.addWidget(card, stretch=1)
-
-    def refresh(self) -> None:
-        search = self._filters.search.text().strip()
-        r_type = self._filters.type_combo.currentData()
-        date_from, date_to = self._filters.date_range()
-
-        with session_scope() as session:
-            movements = list_returns(
-                session,
-                search=search,
-                date_from=date_from,
-                date_to=date_to,
-                return_type_filter=r_type,
-            )
-            # Vérifier les remplacements en une seule session
-            rows = []
-            for m in movements:
-                ref = m.display.reference if m.display else "—"
-                desc = f"{m.display.brand} {m.display.phone_model}".strip() if m.display else "—"
-                is_received = m.change_quantity > 0
-                contact = (m.reseller.name if m.reseller else
-                           m.supplier.name if m.supplier else "")
-                note = m.reason.split(" — ", 1)[1] if " — " in m.reason else ""
-                is_supplier_return = not is_received
-                # movement_batch_id peut être None pour un retour simple ;
-                # on utilise m.id comme identifiant stable dans ce cas.
-                return_id = m.movement_batch_id or m.id
-                replaced = (
-                    has_replacement(session, return_id)
-                    if is_supplier_return else False
-                )
-                rows.append({
-                    "date": _fmt_date(m.created_at),
-                    "ref": ref,
-                    "desc": desc,
-                    "type": "📥 Reçu" if is_received else "📤 Fournisseur",
-                    "is_received": is_received,
-                    "qty": str(abs(m.change_quantity)),
-                    "qty_int": abs(m.change_quantity),
-                    "contact": contact,
-                    "note": note,
-                    "display_id": m.display_id,
-                    "supplier_id": m.supplier_id,
-                    "batch_id": return_id,
-                    "is_supplier_return": is_supplier_return,
-                    "replaced": replaced,
-                })
-        self._rows = rows
-
-        self._table.setRowCount(len(self._rows))
-        for i, row in enumerate(self._rows):
-            self._table.setItem(i, 0, QTableWidgetItem(row["date"]))
-            self._table.setItem(i, 1, QTableWidgetItem(row["ref"]))
-            self._table.setItem(i, 2, QTableWidgetItem(row["desc"]))
-
-            type_item = QTableWidgetItem(row["type"])
-            type_item.setForeground(
-                Qt.GlobalColor.darkGreen if row["is_received"] else Qt.GlobalColor.darkRed
-            )
-            self._table.setItem(i, 3, type_item)
-            _right(self._table, i, 4, row["qty"])
-            self._table.setItem(i, 5, QTableWidgetItem(row["contact"]))
-            self._table.setItem(i, 6, QTableWidgetItem(row["note"]))
-
-            # Colonne 7 : bouton remplacement pour retours fournisseur
-            if row["is_supplier_return"] and row.get("display_id"):
-                w = QWidget()
-                w.setStyleSheet("background: transparent;")
-                wl = QHBoxLayout(w)
-                wl.setContentsMargins(6, 4, 6, 4)
-                if row["replaced"]:
-                    done = QPushButton("✓  Remplacé")
-                    done.setEnabled(False)
-                    done.setStyleSheet(
-                        "QPushButton { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; "
-                        "border-radius: 5px; padding: 4px 10px; font-weight: 700; font-size: 11px; }"
-                    )
-                    wl.addWidget(done)
-                else:
-                    repl_btn = QPushButton("⚙  Résoudre")
-                    repl_btn.setStyleSheet(
-                        "QPushButton { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; "
-                        "border-radius: 5px; padding: 4px 10px; font-weight: 700; font-size: 11px; }"
-                        "QPushButton:hover { background: #bbdefb; }"
-                    )
-                    repl_btn.clicked.connect(
-                        lambda _c, r=row: self._on_replacement(r)
-                    )
-                    wl.addWidget(repl_btn)
-                self._table.setCellWidget(i, 7, w)
-
-        n = len(self._rows)
-        received = sum(1 for r in self._rows if r["is_received"])
-        sent = n - received
-        self._summary.setText(
-            f"{n} retour(s)  —  {received} reçu(s)  ·  {sent} envoyé(s) fournisseur"
-        )
-
-    def _on_replacement(self, row: dict) -> None:
-        dlg = _SupplierResolutionDialog(row, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.refresh()
-
-    def _on_new_return(self) -> None:
-        from app.ui.return_dialog import ReturnDialog
-        dlg = ReturnDialog(parent=self)
-        if dlg.exec() == ReturnDialog.DialogCode.Accepted:
-            self.refresh()
+            if dlg.changed:
+                self.refresh()
+                self.changed.emit()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1400,7 +886,10 @@ class _ReturnsTab(QWidget):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class HistoriquePage(QWidget):
-    """Page Historique avec deux onglets : Suivi des ventes + Mouvements."""
+    """Page Historique avec deux onglets : Suivi des ventes + Mouvements.
+    Émet `stock_changed` quand un retour a été fait depuis un détail."""
+
+    stock_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -1426,11 +915,11 @@ class HistoriquePage(QWidget):
         self._movements_tab = _MovementsTab()
         tabs.addTab(self._movements_tab, "📦  Mouvements de stock")
 
-        self._returns_tab = _ReturnsTab()
-        tabs.addTab(self._returns_tab, "↩  Retours")
+        self._sales_tab.changed.connect(self.stock_changed.emit)
+        self._movements_tab.changed.connect(self.stock_changed.emit)
 
         # Rafraîchir l'onglet quand l'utilisateur clique dessus
-        self._tab_widgets = [self._sales_tab, self._movements_tab, self._returns_tab]
+        self._tab_widgets = [self._sales_tab, self._movements_tab]
         tabs.currentChanged.connect(
             lambda idx: self._tab_widgets[idx].refresh()
             if 0 <= idx < len(self._tab_widgets) else None
@@ -1441,4 +930,3 @@ class HistoriquePage(QWidget):
     def refresh(self) -> None:
         self._sales_tab.refresh()
         self._movements_tab.refresh()
-        self._returns_tab.refresh()
