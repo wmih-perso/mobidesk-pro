@@ -8,11 +8,12 @@ créées à l'exécution dans le profil utilisateur (voir app/paths.py).
 
 import importlib.util
 
-# boto3 n'est importé qu'au moment d'une sauvegarde cloud (app/backup.py) :
-# s'il manque dans l'environnement de build, PyInstaller produit quand même
-# un exe… dont la sauvegarde échoue (« No module named boto3 »). On refuse
-# donc de construire sans lui.
-for _module in ("boto3", "botocore"):
+# boto3 (sauvegarde cloud, app/backup.py) et certifi (certificats pour les
+# mises à jour, app/updater.py) ne sont importés qu'au moment de servir :
+# s'ils manquent dans l'environnement de build, PyInstaller produit quand
+# même un exe… qui échoue à l'usage (« No module named boto3 »). On refuse
+# donc de construire sans eux.
+for _module in ("boto3", "botocore", "certifi"):
     if importlib.util.find_spec(_module) is None:
         raise SystemExit(
             f"{_module} est absent de l'environnement de build : "

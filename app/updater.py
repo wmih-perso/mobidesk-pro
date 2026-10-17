@@ -10,6 +10,8 @@ relance l'app, et s'auto-supprime.
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 import subprocess
 import tempfile
 import urllib.error
@@ -21,7 +23,7 @@ from typing import Callable
 from app.version import ASSET_NAME, GITHUB_OWNER, GITHUB_REPO, APP_VERSION, is_newer
 
 API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-CHECK_TIMEOUT = 5
+CHECK_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 30
 CHUNK_SIZE = 65536
 
@@ -41,6 +43,48 @@ class UpdateInfo:
     notes: str = ""
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """Certificats de Windows + ceux de certifi (embarqués dans l'exe) :
+    un PC dont les certificats racine ne sont pas à jour peut quand même
+    joindre GitHub."""
+    context = ssl.create_default_context()
+    try:
+        import certifi
+
+        context.load_verify_locations(certifi.where())
+    except (ImportError, OSError, ssl.SSLError):
+        pass
+    return context
+
+
+def explain_network_error(error: BaseException) -> str:
+    """Message clair (en français) selon la vraie cause d'un échec réseau —
+    au lieu d'un « pas de connexion » qui cache un problème de date, de
+    certificat, de pare-feu ou de lenteur."""
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code in (403, 429):
+            return (
+                "GitHub limite temporairement les vérifications depuis cette connexion "
+                "(trop de demandes). Réessayez dans une heure."
+            )
+        return f"GitHub a répondu une erreur {error.code}. Réessayez plus tard."
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE" in str(reason).upper():
+        return (
+            "Connexion sécurisée refusée (certificat). Vérifiez que la date et l'heure "
+            "du PC sont justes, et qu'un antivirus ou un pare-feu ne bloque pas GitHub."
+        )
+    if isinstance(reason, ssl.SSLError):
+        return f"Connexion sécurisée impossible ({reason}). Un antivirus ou un pare-feu bloque peut-être GitHub."
+    if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason):
+        return "GitHub ne répond pas assez vite (connexion lente ou instable). Réessayez."
+    if isinstance(reason, socket.gaierror):
+        return "Impossible de trouver github.com : pas de connexion internet, ou accès bloqué (DNS, pare-feu)."
+    if isinstance(reason, ConnectionError):
+        return f"Connexion à GitHub interrompue ({reason}). Un pare-feu ou un antivirus bloque peut-être l'accès."
+    return f"Impossible de contacter GitHub : {reason}"
+
+
 def check_for_update() -> UpdateInfo | None:
     """Renvoie les infos de la dernière release si plus récente, sinon None.
 
@@ -52,16 +96,12 @@ def check_for_update() -> UpdateInfo | None:
         headers={"Accept": "application/vnd.github+json", "User-Agent": "MobiDeskPro-Updater"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=CHECK_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=CHECK_TIMEOUT, context=_ssl_context()) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as error:
-        raise UpdateCheckError(
-            "Impossible de contacter GitHub (pas de connexion internet ?)."
-        ) from error
-    except (TimeoutError, json.JSONDecodeError) as error:
-        raise UpdateCheckError(
-            "Réponse invalide ou délai dépassé lors de la vérification."
-        ) from error
+    except json.JSONDecodeError as error:
+        raise UpdateCheckError("Réponse invalide de GitHub lors de la vérification.") from error
+    except OSError as error:  # URLError, HTTPError, timeout, connexion coupée…
+        raise UpdateCheckError(explain_network_error(error)) from error
 
     tag_name = payload.get("tag_name", "")
     if not tag_name:
@@ -104,7 +144,7 @@ def download_update(
     request = urllib.request.Request(
         info.download_url, headers={"User-Agent": "MobiDeskPro-Updater"}
     )
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT, context=_ssl_context()) as response:
         total = int(response.headers.get("Content-Length", 0))
         read = 0
         with open(destination, "wb") as file:

@@ -1,3 +1,5 @@
+import socket
+import ssl
 import json
 import urllib.error
 from unittest.mock import MagicMock, patch
@@ -78,3 +80,16 @@ def test_build_swap_script_contains_paths_and_pid(tmp_path):
     assert str(new_exe) in content
     assert str(current_exe) in content
     assert "4242" in content
+
+
+@pytest.mark.parametrize("error, expected", [
+    (urllib.error.HTTPError("u", 403, "rate limit", {}, None), "Réessayez dans une heure"),
+    (urllib.error.URLError(ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED")), "date et l'heure"),
+    (urllib.error.URLError(socket.timeout("timed out")), "pas assez vite"),
+    (urllib.error.URLError(socket.gaierror(11001, "getaddrinfo failed")), "pas de connexion internet"),
+    (ConnectionResetError(10054, "reset"), "interrompue"),
+])
+def test_network_errors_are_explained(error, expected):
+    with patch("app.updater.urllib.request.urlopen", side_effect=error):
+        with pytest.raises(UpdateCheckError, match=expected):
+            check_for_update()

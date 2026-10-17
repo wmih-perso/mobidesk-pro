@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
-from app.updater import UpdateInfo, download_update
+from app.updater import UpdateInfo, download_update, explain_network_error
 from app.ui.frameless_dialog import FramelessDialog
 
 
@@ -24,7 +24,7 @@ class _DownloadThread(QThread):
         try:
             path = download_update(self._info, progress_callback=self.progress.emit)
         except OSError as error:
-            self.failed.emit(f"Échec du téléchargement : {error}")
+            self.failed.emit(f"Échec du téléchargement : {explain_network_error(error)}")
             return
         self.finished_ok.emit(path)
 

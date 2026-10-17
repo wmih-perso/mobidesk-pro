@@ -3,3 +3,4 @@ SQLAlchemy>=2.0.30
 pytest>=8.2.0
 pyinstaller>=6.10.0
 boto3>=1.26.0
+certifi>=2024.2.2
