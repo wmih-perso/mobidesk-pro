@@ -96,35 +96,3 @@ def test_upload_backup_sends_a_consistent_copy(config_dir, monkeypatch):
     assert key.startswith("p/stock_backup_") and value == "données"
     assert backup.load_backup_config()["last_backup_ok"] is True
     assert list(config_dir.glob("stock_backup_*.db")) == []  # copie temporaire supprimée
-
-
-def test_import_credentials_from_file_keeps_other_settings(config_dir, tmp_path):
-    import json
-
-    backup.save_backup_config({"enabled": True, "hour": 18, "keep_last": 10})
-    key_file = tmp_path / "cles.json"
-    key_file.write_text(json.dumps({**CREDENTIALS, "autre": "ignoré"}), encoding="utf-8")
-
-    backup.import_credentials(key_file)
-
-    config = backup.load_backup_config()
-    assert backup.is_configured()
-    assert config["bucket_name"] == "bucket" and config["hour"] == 18
-    assert "autre" not in config
-
-
-@pytest.mark.parametrize("content", [
-    "pas du json",
-    '{"endpoint_url": "https://x"}',
-    None,  # modèle non rempli
-    '{"endpoint_url": "http://x", "access_key_id": "a", "secret_access_key": "b", "bucket_name": "c"}',
-])
-def test_import_credentials_rejects_invalid_files(config_dir, tmp_path, content):
-    import json
-
-    key_file = tmp_path / "cles.json"
-    key_file.write_text(content or json.dumps(backup.CREDENTIALS_TEMPLATE), encoding="utf-8")
-
-    with pytest.raises(ValueError):
-        backup.import_credentials(key_file)
-    assert not backup.is_configured()

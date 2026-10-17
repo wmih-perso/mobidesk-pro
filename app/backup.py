@@ -88,40 +88,6 @@ def is_configured() -> bool:
     return _has_credentials(load_backup_config())
 
 
-CREDENTIAL_KEYS = ("endpoint_url", "access_key_id", "secret_access_key", "bucket_name")
-
-CREDENTIALS_TEMPLATE = {
-    "endpoint_url": "https://s3.<region>.backblazeb2.com",
-    "access_key_id": "<keyID>",
-    "secret_access_key": "<applicationKey>",
-    "bucket_name": "<nom-du-bucket>",
-}
-
-
-def import_credentials(path: Path) -> dict:
-    """Importe les clés du stockage cloud depuis un fichier JSON (gardé par
-    l'utilisateur sur une clé USB, jamais dans le code ni dans l'exe) et
-    les enregistre dans la configuration locale du PC — elle n'est pas
-    touchée par les mises à jour. Lève ValueError (message en français)
-    si le fichier est invalide."""
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"Fichier illisible : {exc}") from None
-    if not isinstance(data, dict):
-        raise ValueError("Le fichier doit contenir les 4 informations du modèle.")
-    credentials = {key: str(data.get(key, "")).strip() for key in CREDENTIAL_KEYS}
-    missing = [key for key, value in credentials.items() if not value or value.startswith("<")
-               or "<" in value]
-    if missing:
-        raise ValueError("Information(s) manquante(s) ou non remplie(s) : " + ", ".join(missing) + ".")
-    if not credentials["endpoint_url"].startswith("https://"):
-        raise ValueError("endpoint_url doit commencer par https://")
-    config = {**load_backup_config(), **credentials}
-    save_backup_config(config)
-    return config
-
-
 # ---------------------------------------------------------------------------
 # Client S3
 # ---------------------------------------------------------------------------
