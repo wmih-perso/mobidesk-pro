@@ -1,17 +1,19 @@
-"""Impression de tickets de caisse sur imprimante thermique 58mm."""
+"""Impression des tickets (ventes, achats, bons de retour) sur l'imprimante
+choisie dans Paramètres > Imprimante (étiquettes Niimbot B1 ou autre)."""
 
 from __future__ import annotations
 
 from datetime import datetime
 
 from PySide6.QtCore import QMarginsF, QRect, QSizeF, Qt
-from PySide6.QtGui import QFont, QPageLayout, QPageSize, QPainter, QPen
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+from PySide6.QtGui import QFont, QImage, QPageLayout, QPageSize, QPainter, QPen
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
 from PySide6.QtWidgets import QMessageBox
 
 from app.database import session_scope
 from app.models import Display, StockMovement
 from app.money import format_balance_ticket
+from app.printer_config import load_printer_config
 from app.ticket_config import load_ticket_config
 
 
@@ -189,261 +191,372 @@ def print_sale_ticket(
     movement_id: int | None = None,
     parent=None,
 ) -> None:
-    """Ouvre le dialogue d'imprimante et imprime le ticket."""
+    """Imprime le ticket d'une vente / d'un mouvement."""
     data = _collect_ticket_data(batch_id, movement_id)
     if not data:
         QMessageBox.warning(parent, "Impression", "Aucun mouvement trouvé pour ce ticket.")
         return
+    print_ticket_data(data, parent)
 
+
+# ---------------------------------------------------------------------------
+# Imprimante
+# ---------------------------------------------------------------------------
+
+
+def make_printer(cfg: dict | None = None) -> QPrinter:
+    """QPrinter réglé selon Paramètres > Imprimante : imprimante choisie
+    (ou celle par défaut de Windows) et taille d'étiquette."""
+    cfg = cfg or load_printer_config()
     printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-    page_size = QPageSize(QSizeF(40.0, 220.0), QPageSize.Unit.Millimeter)
-    printer.setPageSize(page_size)
-    printer.setPageMargins(QMarginsF(2, 3, 2, 3), QPageLayout.Unit.Millimeter)
-
-    dlg = QPrintDialog(printer, parent)
-    dlg.setWindowTitle("Imprimer le ticket")
-    if dlg.exec() != QPrintDialog.DialogCode.Accepted:
-        return
-
-    _render_ticket(printer, data)
+    name = cfg.get("printer_name") or ""
+    if name and name in QPrinterInfo.availablePrinterNames():
+        printer.setPrinterName(name)
+    apply_label_layout(printer, cfg)
+    return printer
 
 
-def _render_ticket(printer: QPrinter, data: dict) -> None:
+def apply_label_layout(device, cfg: dict) -> None:
+    """Taille d'étiquette (largeur × hauteur en mm), portrait, marges de 1 mm,
+    sur un QPrinter (ou un QPdfWriter pour les tests)."""
+    device.setPageSize(QPageSize(
+        QSizeF(float(cfg["label_width_mm"]), float(cfg["label_height_mm"])),
+        QPageSize.Unit.Millimeter,
+        "MobiDesk",
+        QPageSize.SizeMatchPolicy.ExactMatch,
+    ))
+    device.setPageOrientation(QPageLayout.Orientation.Portrait)
+    device.setPageMargins(QMarginsF(1, 1, 1, 1), QPageLayout.Unit.Millimeter)
+
+
+def print_ticket_data(data: dict, parent=None, cfg: dict | None = None) -> bool:
+    """Imprime un ticket (données de _collect_ticket_data ou
+    collect_return_data) avec les réglages de l'imprimante. Renvoie True
+    si l'impression a été envoyée."""
+    cfg = cfg or load_printer_config()
+    printer = make_printer(cfg)
+    if not cfg.get("direct"):
+        dialog = QPrintDialog(printer, parent)
+        dialog.setWindowTitle("Imprimer le ticket")
+        if dialog.exec() != QPrintDialog.DialogCode.Accepted:
+            return False
+    elif not printer.isValid():
+        QMessageBox.warning(
+            parent, "Impression",
+            "Aucune imprimante disponible. Vérifiez qu'elle est branchée et installée dans "
+            "Windows, puis choisissez-la dans Paramètres > Imprimante.",
+        )
+        return False
+    if not _render_ticket(printer, data, copies=max(1, int(cfg.get("copies", 1)))):
+        QMessageBox.warning(
+            parent, "Impression",
+            f"Impossible d'imprimer sur « {printer.printerName()} ». Vérifiez que "
+            "l'imprimante est allumée et branchée.",
+        )
+        return False
+    return True
+
+
+def test_ticket_data() -> dict:
+    """Ticket d'exemple pour « Imprimer un test » (rien n'est enregistré)."""
+    cfg = load_printer_config()
+    lines = [
+        {"label": "AFF | A12", "category": "Afficheur", "reference": "A12",
+         "qty": 1, "unit_cents": 250000, "total_cents": 250000},
+        {"label": "BAT | IP11", "category": "Batterie", "reference": "IP11",
+         "qty": 2, "unit_cents": 120000, "total_cents": 240000},
+    ]
+    return {
+        "doc_title": "TICKET DE TEST",
+        "test_info": f"Étiquette {cfg['label_width_mm']} × {cfg['label_height_mm']} mm",
+        "ticket_num": 0,
+        "date_str": datetime.now().strftime("%d/%m/%Y  %H:%M"),
+        "lines": lines,
+        "total_brut_cents": 490000,
+        "remise_cents": 0,
+        "total_cents": 490000,
+        "nb_articles": len(lines),
+        "nb_pieces": 3,
+        "frame": True,
+    }
+
+
+def print_test_ticket(parent=None, cfg: dict | None = None) -> bool:
+    data = test_ticket_data()
+    if cfg is not None:
+        data["test_info"] = f"Étiquette {cfg['label_width_mm']} × {cfg['label_height_mm']} mm"
+    return print_ticket_data(data, parent, cfg=cfg)
+
+
+# ---------------------------------------------------------------------------
+# Dessin du ticket
+# ---------------------------------------------------------------------------
+
+# Le ticket est dessiné dans un repère fixe de TICKET_WIDTH unités de large,
+# polices en « pixels » de ce repère, puis réduit (sans déformation) pour
+# tenir entièrement sur l'étiquette — quelle que soit la résolution de
+# l'imprimante (203 ppp pour une imprimante d'étiquettes, 600+ pour une
+# imprimante de bureau).
+TICKET_WIDTH = 300
+
+
+def _font(size: int, bold: bool = False) -> QFont:
+    font = QFont("Courier New")
+    font.setPixelSize(size)
+    font.setBold(bold)
+    return font
+
+
+def _ticket_height(data: dict) -> int:
+    """Hauteur du ticket dans le repère TICKET_WIDTH (dessin à blanc)."""
+    image = QImage(TICKET_WIDTH, 10, QImage.Format.Format_Mono)
+    painter = QPainter(image)
+    try:
+        return _draw_ticket(painter, data, TICKET_WIDTH)
+    finally:
+        painter.end()
+
+
+def _render_ticket(printer, data: dict, copies: int = 1) -> bool:
+    """Imprime `data` sur `printer`, réduit pour tenir sur une étiquette."""
+    height = max(1, _ticket_height(data))
+    painter = QPainter()
+    if not painter.begin(printer):
+        return False
+    try:
+        for copy in range(copies):
+            if copy:
+                printer.newPage()
+            viewport = painter.viewport()
+            scale = min(viewport.width() / TICKET_WIDTH, viewport.height() / height)
+            painter.save()
+            painter.translate((viewport.width() - TICKET_WIDTH * scale) / 2, 0)
+            painter.scale(scale, scale)
+            _draw_ticket(painter, data, TICKET_WIDTH)
+            if data.get("frame"):
+                painter.setPen(QPen(Qt.GlobalColor.black, 2))
+                painter.drawRect(QRect(0, 0, TICKET_WIDTH - 1, height - 1))
+            painter.restore()
+    finally:
+        painter.end()
+    return True
+
+
+def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
+    """Dessine le ticket sur `painter` (largeur W) et renvoie sa hauteur."""
     cfg = load_ticket_config()
     STORE_NAME = cfg["store_name"]
     STORE_PHONE = cfg["store_phone"]
     STORE_TAGLINE = cfg["store_tagline"]
+    y = 0
 
-    painter = QPainter()
-    if not painter.begin(printer):
-        return
+    def lh(pt: int) -> int:
+        return int(pt * 1.55)
 
-    try:
-        W = painter.viewport().width()
-        y = 0
+    def draw(text: str, pt: int, bold: bool = False,
+             align=Qt.AlignmentFlag.AlignLeft,
+             x0: int = 0, w: int | None = None) -> None:
+        nonlocal y
+        painter.setFont(_font(pt, bold))
+        h = lh(pt)
+        painter.drawText(
+            QRect(x0, y, w if w is not None else W - x0, h),
+            int(align) | Qt.TextFlag.TextSingleLine, text,
+        )
+        y += h
 
-        def lh(pt: int) -> int:
-            return int(pt * 1.55)
+    def hline(thick: bool = False, dashed: bool = False, gap: int = 6) -> None:
+        nonlocal y
+        y += gap
+        pen = QPen(Qt.GlobalColor.black, 3 if thick else 1,
+                   Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
+        painter.setPen(pen)
+        painter.drawLine(0, y, W, y)
+        painter.setPen(QPen(Qt.GlobalColor.black, 1))
+        y += gap
 
-        def draw(text: str, pt: int, bold: bool = False,
-                 align=Qt.AlignmentFlag.AlignLeft,
-                 x0: int = 0, w: int | None = None) -> None:
-            nonlocal y
-            f = QFont("Courier New", pt)
-            f.setBold(bold)
-            painter.setFont(f)
-            h = lh(pt)
-            painter.drawText(
-                QRect(x0, y, w if w is not None else W - x0, h),
-                int(align) | Qt.TextFlag.TextSingleLine, text,
-            )
-            y += h
-
-        def hline(thick: bool = False, dashed: bool = False, gap: int = 6) -> None:
-            nonlocal y
-            y += gap
-            pen = QPen(Qt.GlobalColor.black, 3 if thick else 1,
-                       Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
-            painter.setPen(pen)
-            painter.drawLine(0, y, W, y)
-            painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            y += gap
-
-        def double_rule() -> None:
-            nonlocal y
-            y += 4
-            painter.setPen(QPen(Qt.GlobalColor.black, 3, Qt.PenStyle.SolidLine))
-            painter.drawLine(0, y, W, y)
-            y += 5
-            painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.SolidLine))
-            painter.drawLine(0, y, W, y)
-            painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            y += 6
-
-        # ── En-tête ──────────────────────────────────────────────────────
-        draw(STORE_NAME, 20, bold=True, align=Qt.AlignmentFlag.AlignCenter)
-        draw(STORE_TAGLINE, 11, align=Qt.AlignmentFlag.AlignCenter)
-        draw(f"☎ {STORE_PHONE}", 13, bold=True, align=Qt.AlignmentFlag.AlignCenter)
-        double_rule()
-
-        if data.get("doc_title"):
-            draw(data["doc_title"], 14, bold=True, align=Qt.AlignmentFlag.AlignCenter)
-            if data.get("source_ticket"):
-                draw(f"Ticket d'origine : #{data['source_ticket']:06d}", 10,
-                     align=Qt.AlignmentFlag.AlignCenter)
-            hline(gap=3)
-
-        # ── Infos ticket ─────────────────────────────────────────────────
-        h_row = lh(13)
-        f13 = QFont("Courier New", 13)
-        f13b = QFont("Courier New", 13)
-        f13b.setBold(True)
-        painter.setFont(f13b)
-        painter.drawText(QRect(0, y, W // 2, h_row),
-                         Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
-                         f"N° #{data['ticket_num']:06d}")
-        painter.setFont(f13)
-        painter.drawText(QRect(W // 2, y, W // 2, h_row),
-                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                         data["date_str"])
-        y += h_row
-
-        if data.get("cashier_name"):
-            draw(f"Caissier : {data['cashier_name']}", 11)
-
-        if data.get("reseller_name"):
-            y += 4
-            from PySide6.QtGui import QColor
-            painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DashLine))
-            painter.drawRoundedRect(QRect(0, y, W, lh(13) + (lh(11) if data.get("reseller_phone") else 0) + 8), 4, 4)
-            painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            y += 4
-            contact_label = data.get("contact_label", "Client")
-            draw(f"▸ {contact_label} : {data['reseller_name']}", 13, bold=True, x0=4, w=W - 8)
-            if data.get("reseller_phone"):
-                draw(f"☎ {data['reseller_phone']}", 11, x0=4, w=W - 8)
-            y += 4
-
-        double_rule()
-
-        # ── En-tête colonnes ─────────────────────────────────────────────
-        cw = [int(W * 0.48), int(W * 0.10), int(W * 0.20), int(W * 0.22)]
-        cx = [sum(cw[:i]) for i in range(4)]
-        h_hdr = lh(12)
-        f_hdr = QFont("Courier New", 12)
-        f_hdr.setBold(True)
-        painter.setFont(f_hdr)
-        for label, x, w_col, al in zip(
-            ["ARTICLE", "Q", "P.U", "TOT"],
-            cx, cw,
-            [Qt.AlignmentFlag.AlignLeft] + [Qt.AlignmentFlag.AlignRight] * 3,
-        ):
-            painter.drawText(QRect(x, y, w_col, h_hdr), int(al) | Qt.TextFlag.TextSingleLine, label)
-        y += h_hdr
-        painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+    def double_rule() -> None:
+        nonlocal y
+        y += 4
+        painter.setPen(QPen(Qt.GlobalColor.black, 3, Qt.PenStyle.SolidLine))
+        painter.drawLine(0, y, W, y)
+        y += 5
+        painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.SolidLine))
         painter.drawLine(0, y, W, y)
         painter.setPen(QPen(Qt.GlobalColor.black, 1))
         y += 6
 
-        # ── Lignes produits ───────────────────────────────────────────────
-        f_body = QFont("Courier New", 13)
-        f_sub = QFont("Courier New", 10)
-        h_body = lh(13)
-        h_sub = lh(10)
+    painter.setPen(QPen(Qt.GlobalColor.black, 1))
 
-        for line in data["lines"]:
-            cat3 = line.get("category", "")[:3]
-            ref = line.get("reference", "")
-            article_label = f"{cat3} | {ref}" if (cat3 or ref) else line["label"]
+    # ── En-tête ──────────────────────────────────────────────────────
+    draw(STORE_NAME, 20, bold=True, align=Qt.AlignmentFlag.AlignCenter)
+    draw(STORE_TAGLINE, 11, align=Qt.AlignmentFlag.AlignCenter)
+    draw(f"☎ {STORE_PHONE}", 13, bold=True, align=Qt.AlignmentFlag.AlignCenter)
+    double_rule()
 
-            painter.setFont(f_body)
-            painter.drawText(QRect(cx[0], y, cw[0], h_body),
-                             Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
-                             article_label)
-            painter.drawText(QRect(cx[1], y, cw[1], h_body),
-                             Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                             str(line["qty"]))
-            painter.drawText(QRect(cx[2], y, cw[2], h_body),
-                             Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                             _da(line["unit_cents"]))
-            painter.drawText(QRect(cx[3], y, cw[3], h_body),
-                             Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                             _da(line["total_cents"]))
-            y += h_body
+    if data.get("doc_title"):
+        draw(data["doc_title"], 14, bold=True, align=Qt.AlignmentFlag.AlignCenter)
+        if data.get("source_ticket"):
+            draw(f"Ticket d'origine : #{data['source_ticket']:06d}", 10,
+                 align=Qt.AlignmentFlag.AlignCenter)
+        if data.get("test_info"):
+            draw(data["test_info"], 10, align=Qt.AlignmentFlag.AlignCenter)
+        hline(gap=3)
 
-            painter.setPen(QPen(Qt.GlobalColor.lightGray, 1, Qt.PenStyle.DotLine))
-            painter.drawLine(0, y + 2, W, y + 2)
-            painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            y += 8
+    # ── Infos ticket ─────────────────────────────────────────────────
+    h_row = lh(13)
+    painter.setFont(_font(13, bold=True))
+    painter.drawText(QRect(0, y, W // 2, h_row),
+                     Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
+                     f"N° #{data['ticket_num']:06d}")
+    painter.setFont(_font(13))
+    painter.drawText(QRect(W // 2, y, W // 2, h_row),
+                     Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                     data["date_str"])
+    y += h_row
 
-        hline(thick=True, gap=4)
+    if data.get("cashier_name"):
+        draw(f"Caissier : {data['cashier_name']}", 11)
 
-        # Nb articles
-        draw(f"NBR ART : {data['nb_articles']}   TQTE : {data['nb_pieces']}", 11)
+    if data.get("reseller_name"):
         y += 4
-
-        # ── Section totaux ───────────────────────────────────────────────
-        def right_row(label: str, value: str, pt: int = 12, bold_val: bool = False,
-                      label_frac: float = 0.5) -> None:
-            nonlocal y
-            h = lh(pt)
-            lbl_w = int(W * label_frac)
-            val_w = W - lbl_w
-            f_lbl = QFont("Courier New", pt)
-            painter.setFont(f_lbl)
-            painter.setPen(QPen(Qt.GlobalColor.black, 1))
-            painter.drawText(QRect(0, y, lbl_w, h),
-                             Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine, label)
-            f_val = QFont("Courier New", pt)
-            f_val.setBold(bold_val)
-            painter.setFont(f_val)
-            painter.drawText(QRect(lbl_w, y, val_w, h),
-                             Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine, value)
-            y += h
-
-        if data.get("remise_cents", 0) > 0:
-            right_row("TOTAL :", f"{_da(data['total_brut_cents'])} DA")
-            right_row("REMISE :", f"- {_da(data['remise_cents'])} DA")
-            hline(gap=3)
-
-        # Total encadré
-        h_tot = lh(18)
-        margin = 4
-        painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
-        painter.drawRect(QRect(0, y, W, h_tot + margin * 2))
+        painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DashLine))
+        painter.drawRoundedRect(QRect(0, y, W, lh(13) + (lh(11) if data.get("reseller_phone") else 0) + 8), 4, 4)
         painter.setPen(QPen(Qt.GlobalColor.black, 1))
-        y += margin
-        f_tot = QFont("Courier New", 18)
-        f_tot.setBold(True)
-        painter.setFont(f_tot)
-        painter.drawText(QRect(6, y, W // 2, h_tot),
-                         Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
-                         data.get("total_label")
-                         or ("TTC À PAYER" if data.get("remise_cents", 0) > 0 else "TOTAL"))
-        painter.drawText(QRect(W // 2, y, W // 2 - 6, h_tot),
-                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                         f"{_da(data['total_cents'])} DA")
-        y += h_tot + margin + 6
-
-        # ── Section solde revendeur ───────────────────────────────────────
-        if data.get("has_reseller") and (data.get("versement_cents") or 0) >= 0:
-            hline(dashed=True, gap=4)
-            draw("Anc. solde :", 10)
-            draw(format_balance_ticket(data['balance_before_cents']), 11,
-                 align=Qt.AlignmentFlag.AlignRight)
-            right_row("Total achat :", f"{_da(data['total_cents'])} DA", pt=10)
-            right_row("Versement :", f"{_da(data['versement_cents'])} DA", pt=10)
-            hline(gap=3)
-            draw("Nouv. solde :", 10)
-            draw(format_balance_ticket(data['balance_after_cents']), 11,
-                 bold=True, align=Qt.AlignmentFlag.AlignRight)
-            y += 4
-
-        # ── Section solde fournisseur ─────────────────────────────────────
-        if data.get("has_supplier"):
-            hline(dashed=True, gap=4)
-            right_row("Anc. solde four. :", format_balance_ticket(data['supplier_balance_before_cents']))
-            right_row("Total achat :", f"{_da(data['total_cents'])} DA")
-            right_row("Versement :", f"{_da(data['supplier_versement_cents'])} DA")
-            hline(gap=3)
-            right_row("Nouv. solde four. :", format_balance_ticket(data['supplier_balance_after_cents']), bold_val=True)
-            y += 4
-
-        # ── Règlement et solde d'un bon de retour ─────────────────────────
-        if data.get("doc_title"):
-            hline(dashed=True, gap=4)
-            if data.get("settlement_label"):
-                right_row("Règlement :", data["settlement_label"], pt=10)
-            for label, value in data.get("balance_rows", []):
-                draw(label, 10)
-                draw(value, 11, bold=label.startswith("Nouv"), align=Qt.AlignmentFlag.AlignRight)
-            y += 4
-
-        # ── Pied ──────────────────────────────────────────────────────────
-        hline(dashed=True, gap=4)
         y += 4
-        draw("Merci pour votre confiance !", 12, bold=True, align=Qt.AlignmentFlag.AlignCenter)
-        draw("━" * 20, 10, align=Qt.AlignmentFlag.AlignCenter)
+        contact_label = data.get("contact_label", "Client")
+        draw(f"▸ {contact_label} : {data['reseller_name']}", 13, bold=True, x0=4, w=W - 8)
+        if data.get("reseller_phone"):
+            draw(f"☎ {data['reseller_phone']}", 11, x0=4, w=W - 8)
+        y += 4
 
-    finally:
-        painter.end()
+    double_rule()
+
+    # ── En-tête colonnes ─────────────────────────────────────────────
+    cw = [int(W * 0.48), int(W * 0.10), int(W * 0.20), int(W * 0.22)]
+    cx = [sum(cw[:i]) for i in range(4)]
+    h_hdr = lh(12)
+    painter.setFont(_font(12, bold=True))
+    for label, x, w_col, al in zip(
+        ["ARTICLE", "Q", "P.U", "TOT"],
+        cx, cw,
+        [Qt.AlignmentFlag.AlignLeft] + [Qt.AlignmentFlag.AlignRight] * 3,
+    ):
+        painter.drawText(QRect(x, y, w_col, h_hdr), int(al) | Qt.TextFlag.TextSingleLine, label)
+    y += h_hdr
+    painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+    painter.drawLine(0, y, W, y)
+    painter.setPen(QPen(Qt.GlobalColor.black, 1))
+    y += 6
+
+    # ── Lignes produits ───────────────────────────────────────────────
+    h_body = lh(13)
+    for line in data["lines"]:
+        cat3 = line.get("category", "")[:3]
+        ref = line.get("reference", "")
+        article_label = f"{cat3} | {ref}" if (cat3 or ref) else line["label"]
+
+        painter.setFont(_font(13))
+        painter.drawText(QRect(cx[0], y, cw[0], h_body),
+                         Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
+                         article_label)
+        painter.drawText(QRect(cx[1], y, cw[1], h_body),
+                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                         str(line["qty"]))
+        painter.drawText(QRect(cx[2], y, cw[2], h_body),
+                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                         _da(line["unit_cents"]))
+        painter.drawText(QRect(cx[3], y, cw[3], h_body),
+                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                         _da(line["total_cents"]))
+        y += h_body
+
+        painter.setPen(QPen(Qt.GlobalColor.lightGray, 1, Qt.PenStyle.DotLine))
+        painter.drawLine(0, y + 2, W, y + 2)
+        painter.setPen(QPen(Qt.GlobalColor.black, 1))
+        y += 8
+
+    hline(thick=True, gap=4)
+
+    # Nb articles
+    draw(f"NBR ART : {data['nb_articles']}   TQTE : {data['nb_pieces']}", 11)
+    y += 4
+
+    # ── Section totaux ───────────────────────────────────────────────
+    def right_row(label: str, value: str, pt: int = 12, bold_val: bool = False,
+                  label_frac: float = 0.5) -> None:
+        nonlocal y
+        h = lh(pt)
+        lbl_w = int(W * label_frac)
+        val_w = W - lbl_w
+        painter.setFont(_font(pt))
+        painter.setPen(QPen(Qt.GlobalColor.black, 1))
+        painter.drawText(QRect(0, y, lbl_w, h),
+                         Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine, label)
+        painter.setFont(_font(pt, bold_val))
+        painter.drawText(QRect(lbl_w, y, val_w, h),
+                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine, value)
+        y += h
+
+    if data.get("remise_cents", 0) > 0:
+        right_row("TOTAL :", f"{_da(data['total_brut_cents'])} DA")
+        right_row("REMISE :", f"- {_da(data['remise_cents'])} DA")
+        hline(gap=3)
+
+    # Total encadré
+    h_tot = lh(18)
+    margin = 4
+    painter.setPen(QPen(Qt.GlobalColor.black, 2, Qt.PenStyle.SolidLine))
+    painter.drawRect(QRect(0, y, W, h_tot + margin * 2))
+    painter.setPen(QPen(Qt.GlobalColor.black, 1))
+    y += margin
+    painter.setFont(_font(18, bold=True))
+    painter.drawText(QRect(6, y, W // 2, h_tot),
+                     Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
+                     data.get("total_label")
+                     or ("TTC À PAYER" if data.get("remise_cents", 0) > 0 else "TOTAL"))
+    painter.drawText(QRect(W // 2, y, W // 2 - 6, h_tot),
+                     Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                     f"{_da(data['total_cents'])} DA")
+    y += h_tot + margin + 6
+
+    # ── Section solde revendeur ───────────────────────────────────────
+    if data.get("has_reseller") and (data.get("versement_cents") or 0) >= 0:
+        hline(dashed=True, gap=4)
+        draw("Anc. solde :", 10)
+        draw(format_balance_ticket(data['balance_before_cents']), 11,
+             align=Qt.AlignmentFlag.AlignRight)
+        right_row("Total achat :", f"{_da(data['total_cents'])} DA", pt=10)
+        right_row("Versement :", f"{_da(data['versement_cents'])} DA", pt=10)
+        hline(gap=3)
+        draw("Nouv. solde :", 10)
+        draw(format_balance_ticket(data['balance_after_cents']), 11,
+             bold=True, align=Qt.AlignmentFlag.AlignRight)
+        y += 4
+
+    # ── Section solde fournisseur ─────────────────────────────────────
+    if data.get("has_supplier"):
+        hline(dashed=True, gap=4)
+        right_row("Anc. solde four. :", format_balance_ticket(data['supplier_balance_before_cents']))
+        right_row("Total achat :", f"{_da(data['total_cents'])} DA")
+        right_row("Versement :", f"{_da(data['supplier_versement_cents'])} DA")
+        hline(gap=3)
+        right_row("Nouv. solde four. :", format_balance_ticket(data['supplier_balance_after_cents']), bold_val=True)
+        y += 4
+
+    # ── Règlement et solde d'un bon de retour ─────────────────────────
+    if data.get("settlement_label") or data.get("balance_rows"):
+        hline(dashed=True, gap=4)
+        if data.get("settlement_label"):
+            right_row("Règlement :", data["settlement_label"], pt=10)
+        for label, value in data.get("balance_rows", []):
+            draw(label, 10)
+            draw(value, 11, bold=label.startswith("Nouv"), align=Qt.AlignmentFlag.AlignRight)
+        y += 4
+
+    # ── Pied ──────────────────────────────────────────────────────────
+    hline(dashed=True, gap=4)
+    y += 4
+    draw("Merci pour votre confiance !", 12, bold=True, align=Qt.AlignmentFlag.AlignCenter)
+    draw("━" * 20, 10, align=Qt.AlignmentFlag.AlignCenter)
+    return y

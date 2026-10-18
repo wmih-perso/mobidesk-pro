@@ -52,6 +52,7 @@ from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_page import ContactsPage
 from app.ui.display_dialog import DisplayDialog
 from app.ui.history_page import HistoriquePage
+from app.ui.printer_panel import PrinterPanel
 from app.ui.profit_tab import ProfitTab
 from app.ui.resellers_panel import ResellersPanel
 from app.ui.returns_page import ReturnsPage
@@ -776,6 +777,10 @@ class MainWindow(QMainWindow):
         card_layout.addSpacing(20)
         card_layout.addWidget(_separator())
         card_layout.addSpacing(20)
+        card_layout.addWidget(self._build_printer_section())
+        card_layout.addSpacing(20)
+        card_layout.addWidget(_separator())
+        card_layout.addSpacing(20)
         card_layout.addWidget(self._build_database_section())
         card_layout.addSpacing(20)
         card_layout.addWidget(_separator())
@@ -912,6 +917,28 @@ class MainWindow(QMainWindow):
         self.backup_panel = BackupPanel()
         section_layout.addWidget(self.backup_panel)
 
+        return section
+
+    def _build_printer_section(self) -> QWidget:
+        section = QFrame()
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(0, 0, 0, 0)
+        section_layout.setSpacing(8)
+
+        label = QLabel("🖨  Imprimante des tickets")
+        label.setStyleSheet("font-weight: 700; font-size: 14px; color: #1e3a8a;")
+        section_layout.addWidget(label)
+
+        hint = QLabel(
+            "Imprimante et taille d'étiquette utilisées pour tous les tickets "
+            "(ventes, achats, bons de retour)."
+        )
+        hint.setStyleSheet("color: #8991ac; font-size: 12px;")
+        hint.setWordWrap(True)
+        section_layout.addWidget(hint)
+
+        self.printer_panel = PrinterPanel()
+        section_layout.addWidget(self.printer_panel)
         return section
 
     def _build_ticket_section(self) -> QWidget:

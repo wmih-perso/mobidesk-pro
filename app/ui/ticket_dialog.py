@@ -271,18 +271,7 @@ class TicketPreviewDialog(FramelessDialog):
     # ------------------------------------------------------------------
 
     def _on_print(self) -> None:
-        from PySide6.QtCore import QMarginsF, QSizeF
-        from PySide6.QtGui import QPageLayout, QPageSize
-        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+        from app.printing import print_ticket_data
 
-        from app.printing import _render_ticket
-
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        page_size = QPageSize(QSizeF(40.0, 220.0), QPageSize.Unit.Millimeter)
-        printer.setPageSize(page_size)
-        printer.setPageMargins(QMarginsF(2, 3, 2, 3), QPageLayout.Unit.Millimeter)
-
-        dlg = QPrintDialog(printer, self)
-        dlg.setWindowTitle("Imprimer le ticket")
-        if dlg.exec() == QPrintDialog.DialogCode.Accepted and self._data:
-            _render_ticket(printer, self._data)
+        if self._data:
+            print_ticket_data(self._data, self)
