@@ -273,5 +273,12 @@ class TicketPreviewDialog(FramelessDialog):
     def _on_print(self) -> None:
         from app.printing import print_ticket_data
 
-        if self._data:
-            print_ticket_data(self._data, self)
+        if not self._data:
+            return
+        # Bouton désactivé pendant l'envoi, puis fenêtre fermée : un même
+        # ticket ne peut pas partir deux fois par un double-clic.
+        self._print_btn.setEnabled(False)
+        if print_ticket_data(self._data, self):
+            self.accept()
+        else:
+            self._print_btn.setEnabled(True)  # échec ou annulation : on peut réessayer

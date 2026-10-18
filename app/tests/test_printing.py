@@ -88,3 +88,22 @@ def test_missing_printer_is_reported_instead_of_printing_elsewhere(qt_app, confi
 
     assert printing.print_ticket_data(printing.test_ticket_data(), cfg=cfg) is False
     assert "introuvable" in warnings[0]
+
+
+@pytest.mark.parametrize("printed, closed", [(True, True), (False, False)])
+def test_preview_closes_after_printing(qt_app, config_file, monkeypatch, printed, closed):
+    from app import printing
+    from app.ui.ticket_dialog import TicketPreviewDialog
+
+    calls = []
+    monkeypatch.setattr(printing, "print_ticket_data", lambda data, parent: calls.append(1) or printed)
+    dialog = TicketPreviewDialog.__new__(TicketPreviewDialog)
+    TicketPreviewDialog.__init__(dialog, batch_id=None, movement_id=None)
+    dialog._data = printing.test_ticket_data()
+    dialog._print_btn.setEnabled(True)
+
+    dialog._on_print()
+
+    assert calls == [1]
+    assert (dialog.result() == TicketPreviewDialog.DialogCode.Accepted) is closed
+    assert dialog._print_btn.isEnabled() is not closed
