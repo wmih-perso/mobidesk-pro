@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QMessageBox
 from app.database import session_scope
 from app.models import Display, StockMovement
 from app.money import format_balance_ticket
-from app.printer_config import load_printer_config
+from app.printer_config import PAPER_LABEL, PAPER_ROLL, PAPER_SHEET, load_printer_config, paper_description
 from app.ticket_config import load_ticket_config
 
 
@@ -204,29 +204,45 @@ def print_sale_ticket(
 # ---------------------------------------------------------------------------
 
 
-def make_printer(cfg: dict | None = None) -> QPrinter:
-    """QPrinter réglé selon Paramètres > Imprimante : imprimante choisie
-    (ou celle par défaut de Windows) et taille d'étiquette."""
-    cfg = cfg or load_printer_config()
-    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-    name = cfg.get("printer_name") or ""
-    if name and name in QPrinterInfo.availablePrinterNames():
-        printer.setPrinterName(name)
-    apply_label_layout(printer, cfg)
-    return printer
+SHEET_MARGIN_MM = 10  # une imprimante de bureau n'imprime pas jusqu'au bord
+ROLL_MARGIN_MM = 2
+CUT_PADDING = 10  # espace (unités du ticket) entre le ticket et le pointillé
 
 
-def apply_label_layout(device, cfg: dict) -> None:
-    """Taille d'étiquette (largeur × hauteur en mm), portrait, marges de 1 mm,
-    sur un QPrinter (ou un QPdfWriter pour les tests)."""
+def _page_spec(cfg: dict, ticket_height: int) -> tuple[float, float, float]:
+    """(largeur, hauteur, marge) de la page en mm selon le type de papier.
+    Pour un rouleau, la page fait exactement la longueur du ticket."""
+    paper = cfg.get("paper", PAPER_LABEL)
+    if paper == PAPER_SHEET:
+        return 210.0, 297.0, SHEET_MARGIN_MM
+    if paper == PAPER_ROLL:
+        width = float(cfg["ticket_width_mm"])
+        printable = width - 2 * ROLL_MARGIN_MM
+        height = ticket_height * printable / TICKET_WIDTH + 2 * ROLL_MARGIN_MM + 5
+        return width, height, ROLL_MARGIN_MM
+    return float(cfg["label_width_mm"]), float(cfg["label_height_mm"]), 1.0
+
+
+def apply_page_layout(device, cfg: dict, ticket_height: int) -> None:
+    """Taille de page, portrait et marges sur un QPrinter (ou un QPdfWriter
+    pour les tests)."""
+    width, height, margin = _page_spec(cfg, ticket_height)
     device.setPageSize(QPageSize(
-        QSizeF(float(cfg["label_width_mm"]), float(cfg["label_height_mm"])),
-        QPageSize.Unit.Millimeter,
-        "MobiDesk",
+        QSizeF(width, height), QPageSize.Unit.Millimeter, "MobiDesk",
         QPageSize.SizeMatchPolicy.ExactMatch,
     ))
     device.setPageOrientation(QPageLayout.Orientation.Portrait)
-    device.setPageMargins(QMarginsF(1, 1, 1, 1), QPageLayout.Unit.Millimeter)
+    device.setPageMargins(QMarginsF(margin, margin, margin, margin), QPageLayout.Unit.Millimeter)
+
+
+def make_printer(cfg: dict, ticket_height: int) -> QPrinter:
+    """QPrinter réglé selon Paramètres > Imprimante : imprimante choisie
+    (ou celle par défaut de Windows) et type de papier."""
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    if cfg.get("printer_name"):
+        printer.setPrinterName(cfg["printer_name"])
+    apply_page_layout(printer, cfg, ticket_height)
+    return printer
 
 
 def print_ticket_data(data: dict, parent=None, cfg: dict | None = None) -> bool:
@@ -234,7 +250,16 @@ def print_ticket_data(data: dict, parent=None, cfg: dict | None = None) -> bool:
     collect_return_data) avec les réglages de l'imprimante. Renvoie True
     si l'impression a été envoyée."""
     cfg = cfg or load_printer_config()
-    printer = make_printer(cfg)
+    name = cfg.get("printer_name")
+    if name and name not in QPrinterInfo.availablePrinterNames():
+        # Ne jamais imprimer en silence sur une autre imprimante.
+        QMessageBox.warning(
+            parent, "Impression",
+            f"L'imprimante « {name} » est introuvable. Vérifiez qu'elle est branchée et "
+            "allumée, ou choisissez-en une autre dans Paramètres > Imprimante des tickets.",
+        )
+        return False
+    printer = make_printer(cfg, _ticket_height(data))
     if not cfg.get("direct"):
         dialog = QPrintDialog(printer, parent)
         dialog.setWindowTitle("Imprimer le ticket")
@@ -244,10 +269,10 @@ def print_ticket_data(data: dict, parent=None, cfg: dict | None = None) -> bool:
         QMessageBox.warning(
             parent, "Impression",
             "Aucune imprimante disponible. Vérifiez qu'elle est branchée et installée dans "
-            "Windows, puis choisissez-la dans Paramètres > Imprimante.",
+            "Windows, puis choisissez-la dans Paramètres > Imprimante des tickets.",
         )
         return False
-    if not _render_ticket(printer, data, copies=max(1, int(cfg.get("copies", 1)))):
+    if not _render_ticket(printer, data, cfg, copies=max(1, int(cfg.get("copies", 1)))):
         QMessageBox.warning(
             parent, "Impression",
             f"Impossible d'imprimer sur « {printer.printerName()} ». Vérifiez que "
@@ -268,7 +293,7 @@ def test_ticket_data() -> dict:
     ]
     return {
         "doc_title": "TICKET DE TEST",
-        "test_info": f"Étiquette {cfg['label_width_mm']} × {cfg['label_height_mm']} mm",
+        "test_info": paper_description(cfg),
         "ticket_num": 0,
         "date_str": datetime.now().strftime("%d/%m/%Y  %H:%M"),
         "lines": lines,
@@ -284,7 +309,7 @@ def test_ticket_data() -> dict:
 def print_test_ticket(parent=None, cfg: dict | None = None) -> bool:
     data = test_ticket_data()
     if cfg is not None:
-        data["test_info"] = f"Étiquette {cfg['label_width_mm']} × {cfg['label_height_mm']} mm"
+        data["test_info"] = paper_description(cfg)
     return print_ticket_data(data, parent, cfg=cfg)
 
 
@@ -317,21 +342,36 @@ def _ticket_height(data: dict) -> int:
         painter.end()
 
 
-def _render_ticket(printer, data: dict, copies: int = 1) -> bool:
-    """Imprime `data` sur `printer`, réduit pour tenir sur une étiquette."""
+def _render_ticket(device, data: dict, cfg: dict, copies: int = 1) -> bool:
+    """Imprime `data` sur `device` (QPrinter ou QPdfWriter) selon le type
+    de papier : réduit pour tenir sur une étiquette, à taille réelle sur
+    une feuille A4 (avec un pointillé de découpe) ou sur un rouleau."""
     height = max(1, _ticket_height(data))
+    paper = cfg.get("paper", PAPER_LABEL)
     painter = QPainter()
-    if not painter.begin(printer):
+    if not painter.begin(device):
         return False
     try:
+        dots_per_mm = device.resolution() / 25.4
         for copy in range(copies):
             if copy:
-                printer.newPage()
+                device.newPage()
             viewport = painter.viewport()
-            scale = min(viewport.width() / TICKET_WIDTH, viewport.height() / height)
             painter.save()
-            painter.translate((viewport.width() - TICKET_WIDTH * scale) / 2, 0)
-            painter.scale(scale, scale)
+            if paper == PAPER_SHEET:
+                box_w, box_h = TICKET_WIDTH + 2 * CUT_PADDING, height + 2 * CUT_PADDING
+                target = float(cfg["ticket_width_mm"]) * dots_per_mm
+                scale = min(target / box_w, viewport.height() / box_h)
+                painter.scale(scale, scale)
+                painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DashLine))
+                painter.drawRect(QRect(0, 0, box_w - 1, box_h - 1))
+                painter.translate(CUT_PADDING, CUT_PADDING)
+            elif paper == PAPER_ROLL:
+                painter.scale(viewport.width() / TICKET_WIDTH, viewport.width() / TICKET_WIDTH)
+            else:
+                scale = min(viewport.width() / TICKET_WIDTH, viewport.height() / height)
+                painter.translate((viewport.width() - TICKET_WIDTH * scale) / 2, 0)
+                painter.scale(scale, scale)
             _draw_ticket(painter, data, TICKET_WIDTH)
             if data.get("frame"):
                 painter.setPen(QPen(Qt.GlobalColor.black, 2))

@@ -31,25 +31,60 @@ def qt_app():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.mark.parametrize("width, height", [(50, 30), (50, 80)])
-def test_ticket_prints_on_one_label(qt_app, config_file, tmp_path, width, height):
-    # QPdfWriter plutôt que QPrinter : même rendu, sans interroger les
-    # imprimantes Windows (qui peut prendre plusieurs secondes).
+def _print_to_pdf(tmp_path, cfg, data=None):
+    """Imprime dans un PDF (QPdfWriter : même rendu qu'un QPrinter, sans
+    interroger les imprimantes Windows). Renvoie (nb de pages, taille mm)."""
     from PySide6.QtGui import QPdfWriter
     from PySide6.QtPdf import QPdfDocument
 
-    from app.printing import _render_ticket, apply_label_layout, test_ticket_data
+    from app.printing import _render_ticket, _ticket_height, apply_page_layout, test_ticket_data
 
+    data = data or test_ticket_data()
     pdf = tmp_path / "ticket.pdf"
     writer = QPdfWriter(str(pdf))
-    writer.setResolution(203)  # résolution de la Niimbot B1
-    apply_label_layout(writer, {**printer_config.DEFAULTS, "label_width_mm": width, "label_height_mm": height})
-
-    assert _render_ticket(writer, test_ticket_data())
+    writer.setResolution(203)
+    apply_page_layout(writer, cfg, _ticket_height(data))
+    assert _render_ticket(writer, data, cfg)
     del writer  # termine le fichier PDF
 
     document = QPdfDocument()
     document.load(str(pdf))
-    assert document.pageCount() == 1  # tout le ticket sur une seule étiquette
     size_mm = document.pagePointSize(0) * 25.4 / 72
-    assert (round(size_mm.width()), round(size_mm.height())) == (width, height)
+    return document.pageCount(), (round(size_mm.width()), round(size_mm.height()))
+
+
+@pytest.mark.parametrize("width, height", [(50, 30), (50, 80)])
+def test_ticket_prints_on_one_label(qt_app, config_file, tmp_path, width, height):
+    cfg = {**printer_config.DEFAULTS, "label_width_mm": width, "label_height_mm": height}
+    assert _print_to_pdf(tmp_path, cfg) == (1, (width, height))
+
+
+def test_ticket_on_a4_sheet(qt_app, config_file, tmp_path):
+    cfg = {**printer_config.DEFAULTS, "paper": printer_config.PAPER_SHEET, "ticket_width_mm": 80}
+    assert _print_to_pdf(tmp_path, cfg) == (1, (210, 297))
+
+
+def test_roll_page_is_as_long_as_the_ticket(qt_app, config_file, tmp_path):
+    from app.printing import test_ticket_data
+
+    cfg = {**printer_config.DEFAULTS, "paper": printer_config.PAPER_ROLL, "ticket_width_mm": 80}
+    short = test_ticket_data()
+    long = {**short, "lines": short["lines"] * 10, "nb_articles": 20}
+
+    pages, (width, short_height) = _print_to_pdf(tmp_path, cfg, short)
+    _, (_, long_height) = _print_to_pdf(tmp_path, cfg, long)
+
+    assert pages == 1 and width == 80
+    assert long_height > short_height + 50
+
+
+def test_missing_printer_is_reported_instead_of_printing_elsewhere(qt_app, config_file, monkeypatch):
+    from app import printing
+
+    warnings = []
+    monkeypatch.setattr(printing.QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+    monkeypatch.setattr(printing, "make_printer", lambda *a: pytest.fail("ne doit pas imprimer"))
+    cfg = {**printer_config.DEFAULTS, "printer_name": "Imprimante qui n'existe pas"}
+
+    assert printing.print_ticket_data(printing.test_ticket_data(), cfg=cfg) is False
+    assert "introuvable" in warnings[0]

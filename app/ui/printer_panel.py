@@ -19,7 +19,16 @@ from PySide6.QtWidgets import (
 )
 
 from app import session as _session
-from app.printer_config import LABEL_PRESETS, load_printer_config, save_printer_config
+from app.printer_config import (
+    LABEL_PRESETS,
+    PAPER_LABEL,
+    PAPER_ROLL,
+    PAPER_SHEET,
+    TICKET_WIDTHS,
+    load_printer_config,
+    paper_description,
+    save_printer_config,
+)
 from app.ui.frameless_dialog import FramelessDialog
 
 
@@ -65,7 +74,7 @@ class PrinterPanel(QWidget):
             if missing else f"<b>{_printer_label(cfg)}</b>"
         )
         self._summary_label.setText(
-            f"Imprimante : {printer}  ·  Étiquette : <b>{cfg['label_width_mm']} × {cfg['label_height_mm']} mm</b>"
+            f"Imprimante : {printer}  ·  Papier : <b>{paper_description(cfg)}</b>"
             f"  ·  Exemplaires : <b>{cfg['copies']}</b>"
             f"  ·  Impression directe : <b>{'oui' if cfg.get('direct') else 'non'}</b>"
         )
@@ -88,9 +97,9 @@ class PrinterPanel(QWidget):
 
 
 class PrinterConfigDialog(FramelessDialog):
-    """Choix de l'imprimante, de la taille d'étiquette, du nombre
-    d'exemplaires et de l'impression directe. Rien n'est enregistré avant
-    « Enregistrer »."""
+    """Choix de l'imprimante, du papier (étiquette, feuille A4, rouleau de
+    ticket), du nombre d'exemplaires et de l'impression directe. Rien n'est
+    enregistré avant « Enregistrer »."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -134,6 +143,27 @@ class PrinterConfigDialog(FramelessDialog):
         grid.addWidget(_lbl("Imprimante"), 0, 0)
         grid.addWidget(self._printer_combo, 0, 1)
 
+        self._paper_combo = QComboBox()
+        self._paper_combo.setMinimumHeight(36)
+        self._paper_combo.addItem("Étiquette (ex. Niimbot B1) — ticket réduit pour tenir", PAPER_LABEL)
+        self._paper_combo.addItem("Feuille A4 (imprimante de bureau) — ticket à découper", PAPER_SHEET)
+        self._paper_combo.addItem("Rouleau de ticket de caisse (imprimante à tickets)", PAPER_ROLL)
+        self._paper_combo.setCurrentIndex(max(self._paper_combo.findData(cfg.get("paper", PAPER_LABEL)), 0))
+        grid.addWidget(_lbl("Papier"), 1, 0)
+        grid.addWidget(self._paper_combo, 1, 1)
+
+        self._ticket_width_combo = QComboBox()
+        self._ticket_width_combo.setMinimumHeight(36)
+        self._ticket_width_combo.setFixedWidth(260)
+        for width in TICKET_WIDTHS:
+            self._ticket_width_combo.addItem(f"{width} mm (ticket de caisse)", width)
+        self._ticket_width_combo.setCurrentIndex(
+            max(self._ticket_width_combo.findData(int(cfg.get("ticket_width_mm", 80))), 0)
+        )
+        self._ticket_width_label = _lbl("Largeur du ticket")
+        grid.addWidget(self._ticket_width_label, 2, 0)
+        grid.addWidget(self._ticket_width_combo, 2, 1)
+
         size_row = QHBoxLayout()
         self._size_combo = QComboBox()
         self._size_combo.setMinimumHeight(36)
@@ -144,11 +174,14 @@ class PrinterConfigDialog(FramelessDialog):
         self._width_spin = self._mm_spin(cfg["label_width_mm"], 10, 120)
         self._height_spin = self._mm_spin(cfg["label_height_mm"], 10, 300)
         size_row.addWidget(self._width_spin)
-        size_row.addWidget(QLabel("×"))
+        times_label = QLabel("×")
+        size_row.addWidget(times_label)
         size_row.addWidget(self._height_spin)
         size_row.addStretch()
-        grid.addWidget(_lbl("Taille d'étiquette"), 1, 0)
-        grid.addLayout(size_row, 1, 1)
+        self._size_label = _lbl("Taille d'étiquette")
+        self._size_widgets = [self._size_combo, self._width_spin, times_label, self._height_spin]
+        grid.addWidget(self._size_label, 3, 0)
+        grid.addLayout(size_row, 3, 1)
         # findData ne reconnaît pas les tuples Python : on cherche l'index nous-mêmes.
         preset = (int(cfg["label_width_mm"]), int(cfg["label_height_mm"]))
         index = LABEL_PRESETS.index(preset) if preset in LABEL_PRESETS else self._size_combo.count() - 1
@@ -156,27 +189,26 @@ class PrinterConfigDialog(FramelessDialog):
         self._size_combo.currentIndexChanged.connect(self._on_size_changed)
         self._on_size_changed()
 
-        hint = QLabel(
-            "La taille est écrite sur le rouleau d'étiquettes, ou affichée dans l'application "
-            "Niimbot du téléphone quand le rouleau est dans l'imprimante. Le ticket est réduit "
-            "pour tenir sur une seule étiquette."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #64748b; font-size: 12px;")
-        grid.addWidget(hint, 2, 1)
+        self._hint = QLabel("")
+        self._hint.setWordWrap(True)
+        self._hint.setStyleSheet("color: #64748b; font-size: 12px;")
+        grid.addWidget(self._hint, 4, 1)
 
         self._copies_spin = QSpinBox()
         self._copies_spin.setRange(1, 3)
         self._copies_spin.setValue(int(cfg.get("copies", 1)))
         self._copies_spin.setMinimumHeight(36)
         self._copies_spin.setFixedWidth(80)
-        grid.addWidget(_lbl("Exemplaires"), 3, 0)
-        grid.addWidget(self._copies_spin, 3, 1)
+        grid.addWidget(_lbl("Exemplaires"), 5, 0)
+        grid.addWidget(self._copies_spin, 5, 1)
 
         self._direct_check = QCheckBox("Impression directe (sans la fenêtre de choix de Windows)")
         self._direct_check.setChecked(bool(cfg.get("direct", True)))
-        grid.addWidget(self._direct_check, 4, 1)
+        grid.addWidget(self._direct_check, 6, 1)
         layout.addLayout(grid)
+
+        self._paper_combo.currentIndexChanged.connect(self._on_paper_changed)
+        self._on_paper_changed()
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
@@ -221,10 +253,39 @@ class PrinterConfigDialog(FramelessDialog):
         self._width_spin.setEnabled(custom)
         self._height_spin.setEnabled(custom)
 
+    _HINTS = {
+        PAPER_LABEL: (
+            "La taille est écrite sur le rouleau d'étiquettes, ou affichée dans l'application "
+            "Niimbot du téléphone quand le rouleau est dans l'imprimante. Le ticket est réduit "
+            "pour tenir sur une seule étiquette."
+        ),
+        PAPER_SHEET: (
+            "Le ticket s'imprime à taille réelle en haut de la feuille A4, entouré d'un "
+            "pointillé : découpez le long du pointillé."
+        ),
+        PAPER_ROLL: (
+            "Pour une imprimante à tickets de caisse : le ticket est imprimé sur toute la "
+            "largeur du rouleau, et la page fait la longueur du ticket."
+        ),
+    }
+
+    def _on_paper_changed(self) -> None:
+        paper = self._paper_combo.currentData()
+        is_label = paper == PAPER_LABEL
+        self._ticket_width_label.setVisible(not is_label)
+        self._ticket_width_combo.setVisible(not is_label)
+        self._size_label.setVisible(is_label)
+        for widget in self._size_widgets:
+            widget.setVisible(is_label)
+        self._hint.setText(self._HINTS[paper])
+        self.adjustSize()
+
     def _form_config(self) -> dict:
         return {
             **load_printer_config(),
             "printer_name": self._printer_combo.currentData(),
+            "paper": self._paper_combo.currentData(),
+            "ticket_width_mm": self._ticket_width_combo.currentData(),
             "label_width_mm": self._width_spin.value(),
             "label_height_mm": self._height_spin.value(),
             "copies": self._copies_spin.value(),
