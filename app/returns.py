@@ -88,6 +88,8 @@ class ReturnableOperation:
     date: datetime.datetime
     contact_name: str
     lines: list[ReturnableLine]
+    contact_id: int | None = None
+    invoice_number: str = ""
 
     @property
     def total_cents(self) -> int:
@@ -96,6 +98,10 @@ class ReturnableOperation:
     @property
     def returnable_count(self) -> int:
         return sum(line.returnable for line in self.lines)
+
+    @property
+    def piece_count(self) -> int:
+        return sum(line.quantity for line in self.lines)
 
 
 def _returned_by_movement(session: Session, movement_ids: list[int], kind: str) -> dict[int, int]:
@@ -197,19 +203,21 @@ def list_sales_for_return(
 def list_purchases_for_return(
     session: Session,
     *,
-    supplier_id: int,
+    supplier_id: int | None,
     search: str = "",
     date_from: datetime.datetime | None = None,
     date_to: datetime.datetime | None = None,
     limit: int = 200,
 ) -> list[ReturnableOperation]:
-    """Achats d'un fournisseur, avec la quantité encore renvoyable par
-    ligne : achetée − déjà renvoyée, et jamais plus que le stock actuel."""
+    """Achats d'un fournisseur (de tous si `supplier_id` est None), avec la
+    quantité encore renvoyable par ligne : achetée − déjà renvoyée, et
+    jamais plus que le stock actuel. `search` porte sur les produits, le
+    n° de facture et le nom du fournisseur."""
     stmt = (
         select(StockMovement)
         .options(selectinload(StockMovement.display), selectinload(StockMovement.supplier))
         .where(
-            StockMovement.supplier_id == supplier_id,
+            StockMovement.supplier_id.is_not(None),
             StockMovement.change_quantity > 0,
             StockMovement.is_sale.is_(False),
             StockMovement.return_id.is_(None),
@@ -217,6 +225,8 @@ def list_purchases_for_return(
         )
         .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
     )
+    if supplier_id is not None:
+        stmt = stmt.where(StockMovement.supplier_id == supplier_id)
     if date_from is not None:
         stmt = stmt.where(StockMovement.created_at >= date_from)
     if date_to is not None:
@@ -228,7 +238,9 @@ def list_purchases_for_return(
 
     result: list[ReturnableOperation] = []
     for batch_id, items in _group_by_batch(movements).items():
-        if search and not any(_matches(m, search) for m in items):
+        first = items[0]
+        header_text = f"{first.invoice_number} {first.supplier.name if first.supplier else ''}".lower()
+        if search and search not in header_text and not any(_matches(m, search) for m in items):
             continue
         lines = []
         for m in sorted(items, key=lambda m: m.id):
@@ -248,13 +260,14 @@ def list_purchases_for_return(
                     unit_cost_cents=m.unit_purchase_price_cents,
                 )
             )
-        first = items[0]
         result.append(
             ReturnableOperation(
                 batch_id=batch_id,
                 date=first.created_at,
                 contact_name=first.supplier.name if first.supplier else "",
                 lines=lines,
+                contact_id=first.supplier_id,
+                invoice_number=first.invoice_number,
             )
         )
         if len(result) >= limit:

@@ -263,3 +263,21 @@ def test_legacy_returns_are_converted_with_same_profit(tmp_path):
         assert [(d.kind, d.status) for d in docs] == [("customer", "done"), ("supplier", "pending")]
         assert sum_return_deduction_cents(session) == 200000 - 150000
         assert session.get(Display, display_id).quantity == 7  # stock non retouché
+
+
+def test_purchases_listed_with_invoice_number_for_all_suppliers(db_session):
+    display = _create_sample(db_session, quantity=0)
+    first = create_supplier(db_session, name="Grossiste Alger")
+    second = create_supplier(db_session, name="Grossiste Oran")
+    apply_stock_batch(db_session, direction=1, reason="Achat fournisseur", lines=[(display.id, 4, 140000)],
+                      supplier_id=first.id, invoice_number="FA-0142")
+    apply_stock_batch(db_session, direction=1, reason="Achat fournisseur", lines=[(display.id, 2, 150000)],
+                      supplier_id=second.id)
+
+    purchases = list_purchases_for_return(db_session, supplier_id=None)
+    assert {(p.contact_name, p.invoice_number, p.piece_count) for p in purchases} == {
+        ("Grossiste Alger", "FA-0142", 4), ("Grossiste Oran", "", 2),
+    }
+    [found] = list_purchases_for_return(db_session, supplier_id=None, search="fa-0142")
+    assert found.contact_id == first.id
+    assert len(list_purchases_for_return(db_session, supplier_id=second.id)) == 1

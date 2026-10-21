@@ -331,6 +331,8 @@ class MovementDetailDialog(FramelessDialog):
             ("Stock après", str(d["after"])),
             ("Motif", d["reason"]),
         ]
+        if d.get("invoice"):
+            rows.append(("N° facture", d["invoice"]))
         for label, value in rows:
             row_w = QHBoxLayout()
             lbl = QLabel(label + " :")
@@ -818,6 +820,7 @@ class _MovementsTab(QWidget):
                     "is_sale": m.is_sale,
                     "batch_id": m.movement_batch_id,
                     "mvt_id": m.id,
+                    "invoice": m.invoice_number,
                 })
 
         self._table.setRowCount(len(self._rows))

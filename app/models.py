@@ -152,6 +152,9 @@ class StockMovement(Base):
     # Bon de retour (ReturnDoc) à l'origine de ce mouvement, le cas échéant.
     return_id: Mapped[int | None] = mapped_column(default=None, index=True)
 
+    # N° de la facture du fournisseur, saisi lors d'un achat (facultatif).
+    invoice_number: Mapped[str] = mapped_column(String(50), default="", server_default="")
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property

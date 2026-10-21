@@ -38,7 +38,7 @@ from app.returns import (
     list_sales_for_return,
     settle_pending_exchange,
 )
-from app.services import StockError, get_reseller, get_supplier, list_resellers, list_suppliers
+from app.services import StockError, get_reseller, list_resellers, list_suppliers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernSpinBox
 
@@ -420,7 +420,7 @@ class SupplierReturnDialog(_ReturnDialogBase):
         self._purchases = []
         self._purchase_widgets: list[tuple[object, ModernSpinBox]] = []
         self._defective_widgets: list[tuple[object, ModernSpinBox]] = []
-        self._balance_cents = 0
+        self._balances: dict[int, int] = {}
         self._build_ui()
         if supplier_id is not None:
             self.supplier_combo.setCurrentIndex(max(self.supplier_combo.findData(supplier_id), 0))
@@ -432,22 +432,24 @@ class SupplierReturnDialog(_ReturnDialogBase):
                     break
 
     def _build_ui(self) -> None:
-        self._step("1.  À quel fournisseur, et quels produits ?")
+        self._step("1.  Choisissez la facture d'achat (ou les produits défectueux)")
 
         row = QHBoxLayout()
         row.setSpacing(10)
         self.supplier_combo = QComboBox()
         self.supplier_combo.setMinimumHeight(36)
         self.supplier_combo.setMinimumWidth(240)
+        self.supplier_combo.addItem("Tous les fournisseurs", None)
         with session_scope() as session:
             for supplier in list_suppliers(session):
                 self.supplier_combo.addItem(supplier.name, supplier.id)
+                self._balances[supplier.id] = supplier.balance_cents
             defective_count = sum(d.remaining for d in list_pending_defectives(session))
         self.supplier_combo.currentIndexChanged.connect(self._on_supplier_changed)
         row.addWidget(self.supplier_combo)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Rechercher un produit (référence, marque, modèle)...")
+        self.search_input.setPlaceholderText("Rechercher (n° de facture, fournisseur, produit)...")
         self.search_input.setMinimumHeight(36)
         self.search_input.textChanged.connect(self._reload)
         row.addWidget(self.search_input, stretch=1)
@@ -473,11 +475,17 @@ class SupplierReturnDialog(_ReturnDialogBase):
         purchase_layout = QVBoxLayout(purchase_page)
         purchase_layout.setContentsMargins(0, 0, 0, 0)
         purchase_layout.setSpacing(8)
-        self.purchases_table = _make_table(["Date", "N°", "Produits", "Total"], 2)
-        self.purchases_table.setFixedHeight(160)
+        self.purchases_table = _make_table(
+            ["Date d'achat", "Fournisseur", "N° facture", "Pièces achetées", "Nb pièces", "Total"], 3
+        )
+        self.purchases_table.setFixedHeight(190)
         self.purchases_table.itemSelectionChanged.connect(self._on_purchase_selected)
         purchase_layout.addWidget(self.purchases_table)
-        hint = QLabel("2.  Quantités à renvoyer — limitées à ce qui a été acheté et à ce qui reste en stock.")
+        hint = QLabel(
+            "2.  Produits de la facture sélectionnée — quantités à renvoyer, limitées à ce "
+            "qui a été acheté et à ce qui reste en stock."
+        )
+        hint.setWordWrap(True)
         hint.setStyleSheet(_STEP_STYLE)
         purchase_layout.addWidget(hint)
         self.purchase_lines_table = _make_table(
@@ -528,7 +536,17 @@ class SupplierReturnDialog(_ReturnDialogBase):
         table.setColumnWidth(column, 140)
 
     def _supplier_id(self) -> int | None:
+        """Fournisseur du retour : celui de la facture sélectionnée, sinon
+        celui choisi dans la liste (None = « Tous les fournisseurs »)."""
+        if self._source() == "purchase":
+            purchase = self._selected_purchase()
+            if purchase is not None:
+                return purchase.contact_id
         return self.supplier_combo.currentData()
+
+    def _selected_purchase(self):
+        rows = self.purchases_table.selectionModel().selectedRows()
+        return self._purchases[rows[0].row()] if rows else None
 
     def _source(self) -> str:
         return _checked_choice(self.source_group) or "purchase"
@@ -539,10 +557,6 @@ class SupplierReturnDialog(_ReturnDialogBase):
         self._reload()
 
     def _on_supplier_changed(self) -> None:
-        self._balance_cents = 0
-        if self._supplier_id() is not None:
-            with session_scope() as session:
-                self._balance_cents = get_supplier(session, self._supplier_id()).balance_cents
         self._reload()
 
     def _reload(self) -> None:
@@ -553,21 +567,21 @@ class SupplierReturnDialog(_ReturnDialogBase):
         self._update_summary()
 
     def _reload_purchases(self) -> None:
-        self._purchases = []
-        if self._supplier_id() is not None:
-            with session_scope() as session:
-                self._purchases = list_purchases_for_return(
-                    session, supplier_id=self._supplier_id(), search=self.search_input.text()
-                )
+        with session_scope() as session:
+            self._purchases = list_purchases_for_return(
+                session, supplier_id=self.supplier_combo.currentData(), search=self.search_input.text()
+            )
         self.purchases_table.clearSelection()
         self.purchases_table.setRowCount(len(self._purchases))
         for row, purchase in enumerate(self._purchases):
             _cell(self.purchases_table, row, 0, _fmt_date(purchase.date))
-            _cell(self.purchases_table, row, 1, f"#{purchase.batch_id:06d}")
-            _cell(self.purchases_table, row, 2, ", ".join(
+            _cell(self.purchases_table, row, 1, purchase.contact_name)
+            _cell(self.purchases_table, row, 2, purchase.invoice_number or f"(n° interne #{purchase.batch_id:06d})")
+            _cell(self.purchases_table, row, 3, ", ".join(
                 f"{line.quantity} × {line.reference}" for line in purchase.lines
             ))
-            _cell(self.purchases_table, row, 3, format_da(purchase.total_cents), right=True)
+            _cell(self.purchases_table, row, 4, str(purchase.piece_count), right=True)
+            _cell(self.purchases_table, row, 5, format_da(purchase.total_cents), right=True)
         self._fill_purchase_lines(None)
         if len(self._purchases) == 1:
             self.purchases_table.selectRow(0)
@@ -629,11 +643,13 @@ class SupplierReturnDialog(_ReturnDialogBase):
 
         amount = sum(cost * spin.value() for _l, spin, cost in self._active_lines())
         settlement = _checked_choice(self.settlement_group)
-        after = self._balance_cents - amount if settlement == "debt" else self._balance_cents
+        supplier_id = self._supplier_id()
+        balance = self._balances.get(supplier_id, 0)
+        after = balance - amount if settlement == "debt" else balance
         text = f"Montant : <b>{format_da(amount)}</b>"
-        if self._supplier_id() is not None:
+        if supplier_id is not None:
             text += (
-                f"  ·  Solde fournisseur : {format_balance_ticket(self._balance_cents)}"
+                f"  ·  Solde fournisseur : {format_balance_ticket(balance)}"
                 f"  →  <b>{format_balance_ticket(after)}</b>"
             )
         if settlement == "exchange" and amount:
@@ -642,7 +658,11 @@ class SupplierReturnDialog(_ReturnDialogBase):
 
     def _on_save(self) -> None:
         if self._supplier_id() is None:
-            self._show_error("Ajoutez d'abord un fournisseur (onglet Contacts).")
+            self._show_error(
+                "Cliquez sur une facture d'achat dans la liste."
+                if self._source() == "purchase" else
+                "Choisissez le fournisseur à qui renvoyer les produits défectueux."
+            )
             return
         if self._source() == "purchase":
             kwargs = dict(purchase_lines=[(line.movement_id, spin.value()) for line, spin in self._purchase_widgets])

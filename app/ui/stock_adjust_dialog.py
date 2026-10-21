@@ -358,8 +358,17 @@ class SupplierPurchaseDialog(_BaseStockBatchDialog):
                 self.supplier_input.addItem(supplier.name, supplier.id)
         form.addRow(field_label("Fournisseur", icon="users"), self.supplier_input)
 
+        self.invoice_input = QLineEdit()
+        self.invoice_input.setPlaceholderText("Ex : FA-2026-0142 (facultatif)")
+        self.invoice_input.setMaxLength(50)
+        form.addRow(field_label("N° de facture", icon="list"), self.invoice_input)
+
     def _batch_kwargs(self) -> dict:
-        return dict(reason="Achat fournisseur", supplier_id=self.supplier_input.currentData())
+        return dict(
+            reason="Achat fournisseur",
+            supplier_id=self.supplier_input.currentData(),
+            invoice_number=self.invoice_input.text().strip(),
+        )
 
 
 class WholesaleSaleDialog(_BaseStockBatchDialog):

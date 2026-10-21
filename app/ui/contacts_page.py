@@ -439,7 +439,9 @@ class _DetailPanel(QWidget):
             self._tabs.setStyleSheet(
                 "QTabWidget::pane { border: none; }"
                 "QTabBar::tab { padding: 6px 16px; font-size: 12px; font-weight: 600; }"
-                "QTabBar::tab:selected { color: #2563eb; border-bottom: 2px solid #2563eb; }"
+                # Fond bleu de l'onglet actif (style commun) : texte en blanc,
+                # sinon le texte bleu disparaît sur le fond bleu.
+                "QTabBar::tab:selected { background-color: #2563eb; color: #ffffff; border-color: #2563eb; }"
             )
             self._mvt_tab = self._build_movements_table()
             self._pay_tab = self._build_payments_table()
