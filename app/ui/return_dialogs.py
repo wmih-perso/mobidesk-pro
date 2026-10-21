@@ -40,7 +40,7 @@ from app.returns import (
 )
 from app.services import StockError, get_reseller, list_resellers, list_suppliers
 from app.ui.frameless_dialog import FramelessDialog
-from app.ui.widgets import ModernSpinBox
+from app.ui.widgets import ModernSpinBox, add_clear_button
 
 COUNTER = "counter"  # valeur du combo « Client comptoir »
 
@@ -229,6 +229,8 @@ class CustomerReturnDialog(_ReturnDialogBase):
         row.addWidget(self.contact_combo)
 
         self.ticket_input = QLineEdit()
+
+        add_clear_button(self.ticket_input)
         self.ticket_input.setPlaceholderText("N° de ticket")
         self.ticket_input.setMinimumHeight(36)
         self.ticket_input.setFixedWidth(140)
@@ -236,6 +238,8 @@ class CustomerReturnDialog(_ReturnDialogBase):
         row.addWidget(self.ticket_input)
 
         self.search_input = QLineEdit()
+
+        add_clear_button(self.search_input)
         self.search_input.setPlaceholderText("Rechercher un produit (référence, marque, modèle)...")
         self.search_input.setMinimumHeight(36)
         self.search_input.textChanged.connect(self._reload_sales)
@@ -449,6 +453,8 @@ class SupplierReturnDialog(_ReturnDialogBase):
         row.addWidget(self.supplier_combo)
 
         self.search_input = QLineEdit()
+
+        add_clear_button(self.search_input)
         self.search_input.setPlaceholderText("Rechercher (n° de facture, fournisseur, produit)...")
         self.search_input.setMinimumHeight(36)
         self.search_input.textChanged.connect(self._reload)

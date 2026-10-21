@@ -23,7 +23,7 @@ from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, create_repair, get_repair, list_displays, update_repair
 from app.ui.frameless_dialog import FramelessDialog
-from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
+from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
 
 PARTS_COLUMNS = ["Pièce", "Quantité", "Prix détail", ""]
 
@@ -105,6 +105,8 @@ class RepairDialog(FramelessDialog):
             ]
 
         self.part_search_input = QLineEdit()
+
+        add_clear_button(self.part_search_input)
         self.part_search_input.setPlaceholderText(
             "Rechercher un produit (référence, marque, modèle)..."
         )

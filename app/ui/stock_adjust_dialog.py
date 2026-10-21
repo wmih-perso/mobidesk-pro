@@ -38,7 +38,7 @@ from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers, list_suppliers
 from app.ui.frameless_dialog import FramelessDialog
-from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, field_label
+from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button, field_label
 
 # Motifs proposés pour un ajustement de stock (ni achat, ni vente).
 ADJUSTMENT_REASONS = [
@@ -116,6 +116,8 @@ class _BaseStockBatchDialog(FramelessDialog):
             ]
 
         self.search_input = QLineEdit()
+
+        add_clear_button(self.search_input)
         self.search_input.setPlaceholderText(
             "Rechercher un produit (référence, marque, modèle)..."
         )

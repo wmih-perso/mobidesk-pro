@@ -34,7 +34,7 @@ from app.returns import (
 )
 from app.services import StockError
 from app.ui.return_dialogs import CustomerReturnDialog, SettleExchangeDialog, SupplierReturnDialog
-from app.ui.widgets import EmptyState, apply_card_shadow
+from app.ui.widgets import EmptyState, add_clear_button, apply_card_shadow
 
 COLUMNS = ["Date", "Bon", "Type", "Contact", "Produits", "Montant", "Règlement", "Statut", ""]
 
@@ -144,6 +144,7 @@ class ReturnsPage(QWidget):
             filter_row.addWidget(button)
         filter_row.addStretch()
         self.search_input = QLineEdit()
+        add_clear_button(self.search_input)
         self.search_input.setPlaceholderText("Rechercher (n° de bon, contact, produit)...")
         self.search_input.setMinimumWidth(320)
         self.search_input.setMinimumHeight(36)

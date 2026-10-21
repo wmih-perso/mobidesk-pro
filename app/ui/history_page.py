@@ -66,7 +66,7 @@ from app.services import (
     list_movements,
     list_sale_batches,
 )
-from app.ui.widgets import apply_card_shadow
+from app.ui.widgets import add_clear_button, apply_card_shadow
 
 PAGE_SIZE = 50
 
@@ -432,6 +432,8 @@ class _FilterBar(QWidget):
         layout.setSpacing(10)
 
         self.search = QLineEdit()
+
+        add_clear_button(self.search)
         self.search.setPlaceholderText("🔍  Rechercher...")
         self.search.setStyleSheet(
             "QLineEdit { background: white; border: 1px solid #bdbdbd; border-radius: 6px; "

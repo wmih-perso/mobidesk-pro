@@ -30,7 +30,7 @@ from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
-from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
+from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
 
 MONTH_NAMES_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -439,6 +439,7 @@ class SalePage(QWidget):
         sl2.setStyleSheet("font-weight: 700; color: #374151; font-size: 13px;")
         search_row.addWidget(sl2)
         self.search_input = QLineEdit()
+        add_clear_button(self.search_input)
         self.search_input.setPlaceholderText("Référence, modèle, catégorie...")
         self.search_input.setStyleSheet(
             "QLineEdit { background: white; border: 2px solid #2563eb; border-radius: 6px; "

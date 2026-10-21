@@ -32,7 +32,7 @@ from app.services import (
     list_displays,
 )
 from app.ui.frameless_dialog import FramelessDialog
-from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
+from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
 
 
 class MovementEditDialog(FramelessDialog):
@@ -151,6 +151,8 @@ class MovementEditDialog(FramelessDialog):
         layout.addWidget(search_label)
 
         self._search_input = QLineEdit()
+
+        add_clear_button(self._search_input)
         self._search_input.setPlaceholderText("Référence, marque, modèle…")
         self._search_input.textChanged.connect(self._on_search_changed)
         layout.addWidget(self._search_input)
