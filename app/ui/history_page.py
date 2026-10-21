@@ -500,6 +500,7 @@ class _SalesTab(QWidget):
         # la v2.3.0 (les anciennes ventes au détail restent listées).
         self._filters = _FilterBar([("Tous les modes", "all")])
         self._filters.type_combo.setVisible(False)
+        self._filters.search.setPlaceholderText("🔍  Rechercher (produit, revendeur, caissier)...")
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(300)
@@ -515,9 +516,9 @@ class _SalesTab(QWidget):
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
 
-        self._table = QTableWidget(0, 6)
+        self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels(
-            ["Date", "Mode", "Nb produits", "Total vente", "Revendeur", ""]
+            ["Date", "Mode", "Nb produits", "Total vente", "Revendeur", "Caissier", ""]
         )
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -543,12 +544,14 @@ class _SalesTab(QWidget):
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._table.setColumnWidth(0, 145)
         self._table.setColumnWidth(1, 90)
         self._table.setColumnWidth(2, 100)
         self._table.setColumnWidth(3, 140)
-        self._table.setColumnWidth(5, 46)
+        self._table.setColumnWidth(5, 180)
+        self._table.setColumnWidth(6, 46)
         self._table.doubleClicked.connect(self._on_double_click)
 
         card_layout.addWidget(self._table, stretch=1)
@@ -586,6 +589,7 @@ class _SalesTab(QWidget):
             _right(self._table, i, 2, str(b["nb_items"]))
             _right(self._table, i, 3, format_da(b["total_cents"]))
             self._table.setItem(i, 4, QTableWidgetItem(b["reseller"]))
+            self._table.setItem(i, 5, QTableWidgetItem(b["cashier"] or "—"))
 
             # Bouton ticket
             print_btn = QPushButton("🖨")
@@ -604,10 +608,10 @@ class _SalesTab(QWidget):
             wl = QHBoxLayout(wrapper)
             wl.setContentsMargins(6, 0, 6, 0)
             wl.addWidget(print_btn)
-            self._table.setCellWidget(i, 5, wrapper)
+            self._table.setCellWidget(i, 6, wrapper)
 
             # Couleur de fond selon mode
-            for col in range(5):
+            for col in range(6):
                 item = self._table.item(i, col)
                 if item and b["sale_type"] == "wholesale":
                     item.setBackground(Qt.GlobalColor.transparent)

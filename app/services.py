@@ -630,11 +630,12 @@ def list_sale_batches(
         )
         nb_items = len(items)
         reseller_name = first.reseller.name if first.reseller else ""
+        cashier_name = next((m.cashier_name for m in items if m.cashier_name), "")
 
-        # Filtre texte : sur référence ou désignation de n'importe quel produit du lot
+        # Filtre texte : produit (référence ou désignation), revendeur ou caissier
         if search:
             s = search.lower()
-            matched = any(
+            matched = s in reseller_name.lower() or s in cashier_name.lower() or any(
                 s in (m.display.reference or "").lower()
                 or s in f"{m.display.brand} {m.display.phone_model}".lower()
                 for m in items
@@ -649,6 +650,7 @@ def list_sale_batches(
             "nb_items": nb_items,
             "total_cents": total_cents,
             "reseller": reseller_name,
+            "cashier": cashier_name,
             "movements": items,
         })
 

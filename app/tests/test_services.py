@@ -447,3 +447,20 @@ def test_category_colors_maps_names(db_session):
     create_category(db_session, name="Coque", color="#7c3aed")
 
     assert category_colors(db_session)["Coque"] == "#7c3aed"
+
+
+def test_sale_batches_show_cashier_and_search_by_reseller_or_cashier(db_session, monkeypatch):
+    from app import session as app_session
+    from app.services import apply_stock_batch, create_reseller, list_sale_batches
+
+    monkeypatch.setattr(app_session, "get_current_cashier_name", lambda: "Karim")
+    display = _create_sample(db_session, quantity=10)
+    amine = create_reseller(db_session, name="Boutique Amine")
+    other = create_reseller(db_session, name="Phone Center")
+    for reseller in (amine, other):
+        apply_stock_batch(db_session, direction=-1, reason="Vente", lines=[(display.id, 1, 200000)],
+                          is_sale=True, sale_price_type="wholesale", reseller_id=reseller.id)
+
+    assert {b["cashier"] for b in list_sale_batches(db_session)} == {"Karim"}
+    assert [b["reseller"] for b in list_sale_batches(db_session, search="amine")] == ["Boutique Amine"]
+    assert len(list_sale_batches(db_session, search="karim")) == 2
