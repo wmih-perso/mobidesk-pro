@@ -430,3 +430,21 @@ class ReturnLine(Base):
 
     def __repr__(self) -> str:
         return f"<ReturnLine display_id={self.display_id} qty={self.quantity}>"
+
+
+class CapitalStart(Base):
+    """Point de départ du suivi du capital (onglet Capital, admin) : valeur
+    du stock au prix d'achat et espèces en caisse à cette date. Le dernier
+    enregistrement est le point de départ en cours."""
+
+    __tablename__ = "capital_starts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
+    stock_value_cents: Mapped[int] = mapped_column(default=0)
+    cash_cents: Mapped[int] = mapped_column(default=0)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+
+    @property
+    def capital_cents(self) -> int:
+        return self.stock_value_cents + self.cash_cents

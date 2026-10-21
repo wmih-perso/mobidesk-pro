@@ -118,6 +118,16 @@ def create_display(
     session.flush()
 
     if quantity > 0:
+        # Le stock de départ est un achat comme un autre : lot FIFO et coût
+        # sur le mouvement (bénéfice et capital justes).
+        session.add(
+            StockBatch(
+                display_id=display.id,
+                quantity_original=quantity,
+                quantity_remaining=quantity,
+                unit_purchase_price_cents=purchase_price_cents,
+            )
+        )
         session.add(
             StockMovement(
                 display_id=display.id,
@@ -125,6 +135,7 @@ def create_display(
                 quantity_before=0,
                 quantity_after=quantity,
                 reason="Stock initial",
+                unit_purchase_price_cents=purchase_price_cents,
             )
         )
 

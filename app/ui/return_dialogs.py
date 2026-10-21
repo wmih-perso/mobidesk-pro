@@ -709,7 +709,10 @@ class SettleExchangeDialog(FramelessDialog):
         root.addWidget(self._make_header(f"Régler le retour R{return_id}", height=54))
 
         body = QWidget()
-        body.setStyleSheet("background: white;")
+        # Fond blanc limité au corps : sans sélecteur, il s'appliquerait aussi
+        # aux boutons (bouton principal blanc sur blanc, invisible).
+        body.setObjectName("DialogBody")
+        body.setStyleSheet("QWidget#DialogBody { background: white; }")
         layout = QVBoxLayout(body)
         layout.setContentsMargins(24, 18, 24, 18)
         layout.setSpacing(12)

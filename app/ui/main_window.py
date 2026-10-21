@@ -47,6 +47,7 @@ from app.services import (
 from app.backup import is_backup_due, load_backup_config
 from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel, run_backup
+from app.ui.capital_page import CapitalPage
 from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_page import ContactsPage
@@ -208,6 +209,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.returns_page)
         self.users_panel = UsersPanel()                      # index 8
         self.stack.addWidget(self.users_panel)
+        self.capital_page = CapitalPage()                    # index 9 (admin)
+        self.stack.addWidget(self.capital_page)
 
         root_layout.addWidget(self._build_status_bar())
 
@@ -1226,6 +1229,11 @@ class MainWindow(QMainWindow):
         elif page_key == "accounts":
             self.users_panel.refresh()
             self.stack.setCurrentIndex(8)
+        elif page_key == "capital":
+            from app import session as _session
+            if _session.is_admin():
+                self.capital_page.refresh()
+                self.stack.setCurrentIndex(9)
 
     def _set_only_low_stock(self, value: bool) -> None:
         if value == self._only_low_stock:
@@ -1253,6 +1261,8 @@ class MainWindow(QMainWindow):
             return "returns"
         if idx == 8:
             return "accounts"
+        if idx == 9:
+            return "capital"
         return "stock"
 
     # ------------------------------------------------------------------
@@ -1282,6 +1292,8 @@ class MainWindow(QMainWindow):
             self.profit_tab.refresh()
         if self.stack.currentIndex() == 7:
             self.returns_page.refresh()
+        if self.stack.currentIndex() == 9:
+            self.capital_page.refresh()
 
     def _refresh_displays(self) -> None:
         with session_scope() as session:
