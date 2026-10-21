@@ -8,6 +8,7 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
+    QLineEdit,
     QDoubleSpinBox,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -404,3 +405,33 @@ def category_badge(name: str, color: str) -> QWidget:
     layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
     layout.addStretch()
     return wrapper
+
+
+def _clear_icon(size: int = 18) -> QIcon:
+    """Croix grise dans un rond clair (bouton « effacer la recherche »)."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#e5e7eb"))
+    painter.drawEllipse(0, 0, size, size)
+    pen = QPen(QColor("#4b5563"))
+    pen.setWidthF(size * 0.12)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    margin = size * 0.32
+    painter.drawLine(int(margin), int(margin), int(size - margin), int(size - margin))
+    painter.drawLine(int(size - margin), int(margin), int(margin), int(size - margin))
+    painter.end()
+    return QIcon(pixmap)
+
+
+def add_clear_button(line_edit: QLineEdit) -> None:
+    """Ajoute une croix « X » à droite du champ, visible dès qu'il contient
+    du texte ; un clic efface le texte (textChanged relance la recherche)."""
+    action = line_edit.addAction(_clear_icon(), QLineEdit.ActionPosition.TrailingPosition)
+    action.setToolTip("Effacer la recherche")
+    action.triggered.connect(line_edit.clear)
+    action.setVisible(bool(line_edit.text()))
+    line_edit.textChanged.connect(lambda text: action.setVisible(bool(text)))

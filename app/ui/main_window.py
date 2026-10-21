@@ -62,7 +62,14 @@ from app.ui.sidebar import Sidebar
 from app.ui.stock_adjust_dialog import StockAdjustmentDialog, SupplierPurchaseDialog
 from app.ui.users_panel import UsersPanel
 from app.ui.updater_dialog import UpdaterDialog
-from app.ui.widgets import EmptyState, HiddenStatCard, IconStatCard, apply_card_shadow, category_badge
+from app.ui.widgets import (
+    EmptyState,
+    HiddenStatCard,
+    IconStatCard,
+    add_clear_button,
+    apply_card_shadow,
+    category_badge,
+)
 from app.updater import (
     UpdateCheckError,
     UpdateInfo,
@@ -120,7 +127,7 @@ MONTH_NAMES_FR = [
     "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 ]
 
-PAGE_SIZE_CHOICES = [10, 25, 50, 100]
+PAGE_SIZE_CHOICES = [25, 50, 100]  # 25 produits par page par défaut
 
 APP_ICON_PATH = Path(__file__).resolve().parent / "resources" / "app_icon.png"
 
@@ -439,6 +446,7 @@ class MainWindow(QMainWindow):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Rechercher par référence, marque ou modèle...")
         self.search_input.setObjectName("PageSearchInput")
+        add_clear_button(self.search_input)
         self.search_input.setMinimumWidth(380)
         self.search_input.setMaximumWidth(620)
 
