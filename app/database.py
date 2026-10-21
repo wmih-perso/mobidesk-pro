@@ -403,8 +403,18 @@ def _ensure_indexes(engine) -> None:
         "CREATE INDEX IF NOT EXISTS ix_stock_movements_linked_batch_id ON stock_movements (linked_batch_id)",
     ]
     with engine.connect() as connection:
+        existing_tables = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
         for statement in statements:
-            connection.exec_driver_sql(statement)
+            # « ... ON <table> (...) » : on ignore les tables pas (encore)
+            # créées, par ex. stock_batches sur une très ancienne base.
+            table = statement.split(" ON ", 1)[1].split(" ", 1)[0]
+            if table in existing_tables:
+                connection.exec_driver_sql(statement)
         connection.commit()
 
 
