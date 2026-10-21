@@ -27,7 +27,7 @@ from app.database import session_scope
 from app.money import format_da
 from app.period import PERIOD_CHOICES, bounds_for_period
 from app.services import list_sales, sum_profit_cents, sum_return_deduction_cents
-from app.ui.widgets import EmptyState, apply_card_shadow
+from app.ui.widgets import ALIGN_RIGHT, EmptyState, apply_card_shadow, right_align_headers
 
 SALE_COLUMNS = [
     "Date",
@@ -39,6 +39,9 @@ SALE_COLUMNS = [
     "Bénéfice unitaire",
     "Bénéfice total",
 ]
+
+# Prix d'achat, de vente, bénéfice unitaire et total : alignés à droite.
+MONEY_COLUMNS = range(4, 8)
 
 SALE_PRICE_TYPE_LABELS = {"retail": "Détail", "wholesale": "Gros"}
 
@@ -88,6 +91,7 @@ class ProfitTab(QWidget):
         )
         self.sales_table.horizontalHeader().setStretchLastSection(True)
         self.sales_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        right_align_headers(self.sales_table, MONEY_COLUMNS)
         table_layout.addWidget(self.sales_table, stretch=1)
 
         self.sales_empty_state = EmptyState(
@@ -239,9 +243,10 @@ class ProfitTab(QWidget):
         self.sales_table.setRowCount(len(rows))
         for row_index, values in enumerate(rows):
             for column_index, value in enumerate(values):
-                self.sales_table.setItem(
-                    row_index, column_index, QTableWidgetItem(str(value))
-                )
+                item = QTableWidgetItem(str(value))
+                if column_index in MONEY_COLUMNS:
+                    item.setTextAlignment(ALIGN_RIGHT)
+                self.sales_table.setItem(row_index, column_index, item)
 
     def _on_export_csv(self) -> None:
         if not self._current_rows:

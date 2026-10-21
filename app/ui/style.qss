@@ -454,7 +454,7 @@ QHeaderView::section:last {
 }
 
 QTableWidget::item, QTableView::item {
-    padding: 2px 4px;
+    padding: 2px 10px;
     border: none;
 }
 

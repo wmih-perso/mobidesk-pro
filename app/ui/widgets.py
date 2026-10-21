@@ -435,3 +435,15 @@ def add_clear_button(line_edit: QLineEdit) -> None:
     action.triggered.connect(line_edit.clear)
     action.setVisible(bool(line_edit.text()))
     line_edit.textChanged.connect(lambda text: action.setVisible(bool(text)))
+
+
+ALIGN_RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+
+
+def right_align_headers(table, columns) -> None:
+    """Aligne à droite le titre des colonnes de montants, au-dessus des
+    chiffres (eux-mêmes alignés à droite avec ALIGN_RIGHT)."""
+    for column in columns:
+        item = table.horizontalHeaderItem(column)
+        if item is not None:
+            item.setTextAlignment(ALIGN_RIGHT)

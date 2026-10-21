@@ -67,9 +67,11 @@ from app.ui.widgets import (
     EmptyState,
     HiddenStatCard,
     IconStatCard,
+    ALIGN_RIGHT,
     add_clear_button,
     apply_card_shadow,
     category_badge,
+    right_align_headers,
 )
 from app.updater import (
     UpdateCheckError,
@@ -116,6 +118,12 @@ DISPLAY_COLUMNS = [
 # index de colonne -> (couleur du texte, titre court avec pastille). Le
 # titre court ne sert qu'à l'écran ; l'export CSV garde DISPLAY_COLUMNS.
 CATEGORY_COLUMN = DISPLAY_COLUMNS.index("Catégorie")
+# Colonnes de montants, alignées à droite (titres compris).
+MONEY_COLUMNS = {
+    DISPLAY_COLUMNS.index("Prix achat"),
+    DISPLAY_COLUMNS.index("Prix vente (détail)"),
+    DISPLAY_COLUMNS.index("Prix vente (gros)"),
+}
 PRICE_COLUMN_STYLES = {
     DISPLAY_COLUMNS.index("Prix vente (détail)"): ("#15803d", "🟢 Prix détail"),
     DISPLAY_COLUMNS.index("Prix vente (gros)"): ("#1d4ed8", "🔵 Prix gros"),
@@ -494,6 +502,7 @@ class MainWindow(QMainWindow):
         # repère les colonnes de prix par une pastille de leur couleur.
         for column_index, (_color, title) in PRICE_COLUMN_STYLES.items():
             self.displays_table.horizontalHeaderItem(column_index).setText(title)
+        right_align_headers(self.displays_table, MONEY_COLUMNS)
         self.displays_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.displays_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.displays_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -1368,6 +1377,8 @@ class MainWindow(QMainWindow):
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, d.id)
+                if column_index in MONEY_COLUMNS:
+                    item.setTextAlignment(ALIGN_RIGHT)
                 price_style = PRICE_COLUMN_STYLES.get(column_index)
                 if price_style is not None:
                     color, _title = price_style

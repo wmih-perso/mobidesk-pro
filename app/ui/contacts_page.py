@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import format_balance, format_balance_ticket, format_da
 from app.ui.frameless_dialog import FramelessDialog
+from app.ui.widgets import ALIGN_RIGHT, right_align_headers
 from app.services import (
     StockError,
     create_reseller,
@@ -479,6 +480,7 @@ class _DetailPanel(QWidget):
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         h.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
         h.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        right_align_headers(self._table, (4, 5))  # Prix unit., Total
         self._table.setColumnWidth(6, 36)
         self._table.setColumnWidth(7, 36)
 
@@ -516,6 +518,7 @@ class _DetailPanel(QWidget):
         ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         ph.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         ph.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        right_align_headers(self._pay_table, (1, 2, 3))  # Montant versé, soldes
 
         self._pay_empty = QLabel("Aucun versement enregistré.")
         self._pay_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -552,7 +555,9 @@ class _DetailPanel(QWidget):
             type_item.setForeground(Qt.GlobalColor.darkGreen if type_ == "Entrée" else Qt.GlobalColor.red)
             self._table.setItem(i, 2, type_item)
             self._table.setItem(i, 3, QTableWidgetItem(str(qty)))
-            self._table.setItem(i, 4, QTableWidgetItem(price))
+            price_item = QTableWidgetItem(price)
+            price_item.setTextAlignment(ALIGN_RIGHT)
+            self._table.setItem(i, 4, price_item)
             total_item = QTableWidgetItem(total)
             total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self._table.setItem(i, 5, total_item)
@@ -586,8 +591,10 @@ class _DetailPanel(QWidget):
                 amt_item.setForeground(Qt.GlobalColor.darkGreen)
                 amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self._pay_table.setItem(i, 1, amt_item)
-                self._pay_table.setItem(i, 2, QTableWidgetItem(bal_before))
-                self._pay_table.setItem(i, 3, QTableWidgetItem(bal_after))
+                for column, balance in ((2, bal_before), (3, bal_after)):
+                    balance_item = QTableWidgetItem(balance)
+                    balance_item.setTextAlignment(ALIGN_RIGHT)
+                    self._pay_table.setItem(i, column, balance_item)
                 self._pay_table.setItem(i, 4, QTableWidgetItem(note))
                 self._pay_table.setItem(i, 5, QTableWidgetItem(cashier))
 
