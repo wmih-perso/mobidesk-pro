@@ -221,7 +221,7 @@ class CustomerReturnDialog(_ReturnDialogBase):
         self.contact_combo = QComboBox()
         self.contact_combo.setMinimumHeight(36)
         self.contact_combo.setMinimumWidth(240)
-        self.contact_combo.addItem("Client comptoir (vente détail)", COUNTER)
+        self.contact_combo.addItem("Anciennes ventes au détail (sans revendeur)", COUNTER)
         with session_scope() as session:
             for reseller in list_resellers(session):
                 self.contact_combo.addItem(reseller.name, reseller.id)

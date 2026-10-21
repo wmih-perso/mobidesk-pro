@@ -93,27 +93,9 @@ class SaleDialog(FramelessDialog):
         header_layout.setContentsMargins(20, 10, 20, 10)
         header_layout.setSpacing(20)
 
-        # Bloc gauche : Mode de vente + Remise
+        # Bloc gauche : Remise
         left_info = QVBoxLayout()
         left_info.setSpacing(6)
-
-        # Toggle détail / gros
-        toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(4)
-        self.retail_button = QPushButton("Détail")
-        self.retail_button.setCheckable(True)
-        self.retail_button.setChecked(True)
-        self._style_toggle(self.retail_button, True)
-        self.retail_button.clicked.connect(lambda: self._set_sale_type("retail"))
-        toggle_row.addWidget(self.retail_button)
-
-        self.wholesale_button = QPushButton("Gros")
-        self.wholesale_button.setCheckable(True)
-        self._style_toggle(self.wholesale_button, False)
-        self.wholesale_button.clicked.connect(lambda: self._set_sale_type("wholesale"))
-        toggle_row.addWidget(self.wholesale_button)
-        toggle_row.addStretch()
-        left_info.addLayout(toggle_row)
 
         # Remise
         remise_row = QHBoxLayout()
@@ -181,7 +163,6 @@ class SaleDialog(FramelessDialog):
         self.reseller_col.addWidget(self.reseller_combo)
         self.reseller_widget = QWidget()
         self.reseller_widget.setLayout(self.reseller_col)
-        self.reseller_widget.setVisible(False)
         header_layout.addWidget(self.reseller_widget)
 
         header_layout.addStretch()
@@ -360,11 +341,9 @@ class SaleDialog(FramelessDialog):
 
         vers_row.addStretch()
 
-        # Widgets de la ligne versement — initialement cachés
+        # Widgets de la ligne versement (toujours visibles : vente en gros)
         self._vers_widgets = [vers_lbl, self.versement_spin, vers_sep,
                               reste_lbl_title, self._reste_label]
-        for w in self._vers_widgets:
-            w.setVisible(False)
 
         footer_layout.addLayout(vers_row)
 
@@ -416,22 +395,9 @@ class SaleDialog(FramelessDialog):
     # ------------------------------------------------------------------
 
     def _sale_type(self) -> str:
-        return "wholesale" if self.wholesale_button.isChecked() else "retail"
-
-    def _set_sale_type(self, sale_type: str) -> None:
-        is_wholesale = sale_type == "wholesale"
-        self.retail_button.setChecked(not is_wholesale)
-        self.wholesale_button.setChecked(is_wholesale)
-        self._style_toggle(self.retail_button, not is_wholesale)
-        self._style_toggle(self.wholesale_button, is_wholesale)
-        self.reseller_widget.setVisible(is_wholesale)
-        for w in self._vers_widgets:
-            w.setVisible(is_wholesale)
-        for _d_id, retail_cents, wholesale_cents, qty_spin, price_spin in self._line_rows:
-            price_spin.setValue(cents_to_da(wholesale_cents if is_wholesale else retail_cents))
-        self._update_total()
-        if is_wholesale:
-            self._sync_versement_to_total()
+        # Toutes les ventes sont en gros, à un revendeur (« Client comptoir »
+        # pour un client de passage).
+        return "wholesale"
 
     def _on_reseller_changed(self) -> None:
         if self._sale_type() == "wholesale":

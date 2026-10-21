@@ -502,3 +502,21 @@ def test_fresh_database_seeds_colored_categories(tmp_path):
         ]
     assert colors and all(color.startswith("#") for color in colors)
     assert len(set(colors)) == len(colors)
+
+
+def test_counter_reseller_is_created_once(tmp_path):
+    from app.database import _seed_counter_reseller, init_engine
+
+    engine = init_engine(tmp_path / "comptoir.db")
+    with engine.connect() as connection:
+        rows = connection.exec_driver_sql("SELECT id, name FROM resellers").fetchall()
+        assert [name for _id, name in rows] == ["Client comptoir"]
+        # Renommé par l'utilisateur : il ne doit pas être recréé.
+        connection.exec_driver_sql("UPDATE resellers SET name = 'Passage' WHERE id = ?", (rows[0][0],))
+        connection.commit()
+
+    _seed_counter_reseller(engine)
+
+    with engine.connect() as connection:
+        (count,) = connection.exec_driver_sql("SELECT COUNT(*) FROM resellers").fetchone()
+    assert count == 1

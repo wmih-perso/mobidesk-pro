@@ -407,6 +407,29 @@ def _ensure_indexes(engine) -> None:
         connection.commit()
 
 
+COUNTER_RESELLER_NAME = "Client comptoir"
+
+
+def _seed_counter_reseller(engine) -> None:
+    """Crée le revendeur « Client comptoir » (clients de passage) : depuis
+    la v2.3.0 toutes les ventes sont en gros, à un revendeur. Créé une seule
+    fois : s'il est renommé ou supprimé, il n'est pas recréé."""
+    with engine.connect() as connection:
+        (already_seeded,) = connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM resellers WHERE notes LIKE '%[comptoir]%' OR name = ?",
+            (COUNTER_RESELLER_NAME,),
+        ).fetchone()
+        if not already_seeded:
+            connection.exec_driver_sql(
+                "INSERT INTO resellers (name, phone, address, notes, is_active, balance_cents,"
+                " created_at, updated_at) VALUES (?, '', '',"
+                " 'Clients de passage, payés sur place. [comptoir]', 1, 0,"
+                " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (COUNTER_RESELLER_NAME,),
+            )
+        connection.commit()
+
+
 def _seed_default_admin(engine) -> None:
     """Crée le compte admin par défaut si la table users est vide."""
     with engine.connect() as connection:
@@ -444,6 +467,7 @@ def init_engine(database_path: Path | str | None = None):
     _ensure_indexes(_engine)
     _seed_stock_batches(_engine)
     _seed_default_admin(_engine)
+    _seed_counter_reseller(_engine)
     _migrate_legacy_returns(_engine)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
     return _engine

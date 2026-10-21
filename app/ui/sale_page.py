@@ -346,31 +346,6 @@ class SalePage(QWidget):
         hl.setContentsMargins(24, 14, 24, 14)
         hl.setSpacing(24)
 
-        # Toggle Détail / Gros
-        tc = QVBoxLayout()
-        tc.setSpacing(4)
-        lbl = QLabel("Mode de vente")
-        lbl.setStyleSheet("color: #9ca3af; font-size: 13px; font-weight: 600;")
-        tc.addWidget(lbl)
-        tr = QHBoxLayout()
-        tr.setSpacing(4)
-        self.retail_button = QPushButton("Détail")
-        self.retail_button.setCheckable(True)
-        self.retail_button.setChecked(True)
-        self._style_toggle(self.retail_button, True)
-        self.retail_button.clicked.connect(lambda: self._set_sale_type("retail"))
-        tr.addWidget(self.retail_button)
-        self.wholesale_button = QPushButton("Gros")
-        self.wholesale_button.setCheckable(True)
-        self._style_toggle(self.wholesale_button, False)
-        self.wholesale_button.clicked.connect(lambda: self._set_sale_type("wholesale"))
-        tr.addWidget(self.wholesale_button)
-        tr.addStretch()
-        tc.addLayout(tr)
-        hl.addLayout(tc)
-
-        self._add_vsep(hl)
-
         # Remise
         rc = QVBoxLayout()
         rc.setSpacing(4)
@@ -403,14 +378,14 @@ class SalePage(QWidget):
         dl = QLabel(date_str)
         dl.setStyleSheet("color: #d1d5db; font-size: 15px; font-weight: 700;")
         dc.addWidget(dl)
-        sl = QLabel("Vente comptoir")
+        sl = QLabel("Vente en gros")
         sl.setStyleSheet("color: #9ca3af; font-size: 13px;")
         dc.addWidget(sl)
         hl.addLayout(dc)
 
         self._add_vsep(hl)
 
-        # Revendeur (masqué par défaut)
+        # Revendeur (obligatoire : toutes les ventes sont en gros)
         self.reseller_widget = QWidget()
         reseller_col = QVBoxLayout(self.reseller_widget)
         reseller_col.setSpacing(2)
@@ -429,7 +404,6 @@ class SalePage(QWidget):
             "QComboBox::drop-down { border: none; width: 20px; }"
         )
         reseller_col.addWidget(self.reseller_combo)
-        self.reseller_widget.setVisible(False)
         hl.addWidget(self.reseller_widget)
 
         hl.addStretch()
@@ -602,18 +576,10 @@ class SalePage(QWidget):
     # ──────────────────────────────────────────────────────────────────
 
     def _sale_type(self) -> str:
-        return "wholesale" if self.wholesale_button.isChecked() else "retail"
-
-    def _set_sale_type(self, sale_type: str) -> None:
-        is_wholesale = sale_type == "wholesale"
-        self.retail_button.setChecked(not is_wholesale)
-        self.wholesale_button.setChecked(is_wholesale)
-        self._style_toggle(self.retail_button, not is_wholesale)
-        self._style_toggle(self.wholesale_button, is_wholesale)
-        self.reseller_widget.setVisible(is_wholesale)
-        for _d_id, retail_cents, wholesale_cents, qty_spin, price_spin in self._line_rows:
-            price_spin.setValue(cents_to_da(wholesale_cents if is_wholesale else retail_cents))
-        self._update_total()
+        # Toutes les ventes sont en gros, à un revendeur (« Client comptoir »
+        # pour un client de passage) ; les anciennes ventes au détail restent
+        # dans l'historique.
+        return "wholesale"
 
     # ──────────────────────────────────────────────────────────────────
     # Recherche

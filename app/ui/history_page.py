@@ -492,17 +492,15 @@ class _SalesTab(QWidget):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
 
-        self._filters = _FilterBar([
-            ("Tous les modes", "all"),
-            ("Détail seulement", "retail"),
-            ("Gros seulement", "wholesale"),
-        ])
+        # Plus de filtre Détail / Gros : toutes les ventes sont en gros depuis
+        # la v2.3.0 (les anciennes ventes au détail restent listées).
+        self._filters = _FilterBar([("Tous les modes", "all")])
+        self._filters.type_combo.setVisible(False)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(300)
         self._debounce.timeout.connect(self.refresh)
         self._filters.search.textChanged.connect(lambda: self._debounce.start())
-        self._filters.type_combo.currentIndexChanged.connect(self.refresh)
         self._filters.date_combo.currentIndexChanged.connect(self.refresh)
         layout.addWidget(self._filters)
 
@@ -559,7 +557,6 @@ class _SalesTab(QWidget):
 
     def refresh(self) -> None:
         search = self._filters.search.text().strip()
-        sale_type = self._filters.type_combo.currentData()
         date_from, date_to = self._filters.date_range()
 
         with session_scope() as session:
@@ -568,7 +565,6 @@ class _SalesTab(QWidget):
                 search=search,
                 date_from=date_from,
                 date_to=date_to,
-                sale_type_filter=sale_type,
             )
 
         self._table.setRowCount(len(self._data))
