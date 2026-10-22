@@ -22,6 +22,14 @@ def _da(cents: int) -> str:
     return f"{round(cents / 100):,}".replace(",", " ")
 
 
+def article_label(category: str, phone_model: str, reference: str = "") -> str:
+    """Libellé d'un article sur le ticket : catégorie en 3 lettres + modèle
+    compatible (ex. « AFF P20 LITE ») ; la référence si le modèle est vide."""
+    cat3 = (category or "")[:3].upper()
+    designation = (phone_model or "").strip() or (reference or "").strip()
+    return f"{cat3} {designation}".strip() or "?"
+
+
 def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict | None:
     with session_scope() as session:
         if batch_id is not None:
@@ -70,9 +78,10 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
 
         for m in movements:
             display = session.get(Display, m.display_id)
-            cat3 = (display.category or "")[:3].upper() if display else ""
-            ref = (display.reference or "") if display else ""
-            label = f"{cat3} | {ref}" if (cat3 or ref) else ((display.brand or "?") if display else "?")
+            label = (
+                article_label(display.category, display.phone_model, display.reference)
+                if display else "?"
+            )
             qty = abs(m.change_quantity)
             # Pour un achat fournisseur, le prix unitaire est le prix d'achat
             unit_cents = m.unit_sale_price_cents or m.unit_purchase_price_cents or 0
@@ -138,7 +147,7 @@ def collect_return_data(return_id: int) -> dict | None:
         contact = doc.reseller if is_customer else doc.supplier
         lines = []
         for line in doc.lines:
-            label = line.display.reference
+            label = article_label(line.display.category, line.display.phone_model, line.display.reference)
             if line.condition == "defective":
                 label += " (déf.)"
             lines.append({
@@ -309,9 +318,9 @@ def test_ticket_data() -> dict:
     """Ticket d'exemple pour « Imprimer un test » (rien n'est enregistré)."""
     cfg = load_printer_config()
     lines = [
-        {"label": "AFF | A12", "category": "Afficheur", "reference": "A12",
+        {"label": "AFF Galaxy A12", "category": "Afficheur", "reference": "A12",
          "qty": 1, "unit_cents": 250000, "total_cents": 250000},
-        {"label": "BAT | IP11", "category": "Batterie", "reference": "IP11",
+        {"label": "BAT iPhone 11", "category": "Batterie", "reference": "IP11",
          "qty": 2, "unit_cents": 120000, "total_cents": 240000},
     ]
     return {
@@ -596,14 +605,13 @@ def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
     # ── Lignes produits ───────────────────────────────────────────────
     h_body = lh(13)
     for line in data["lines"]:
-        cat3 = line.get("category", "")[:3]
-        ref = line.get("reference", "")
-        article_label = f"{cat3} | {ref}" if (cat3 or ref) else line["label"]
-
         painter.setFont(_font(13))
-        painter.drawText(QRect(cx[0], y, cw[0], h_body),
-                         Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextSingleLine,
-                         article_label)
+        # Libellé (catégorie + modèle) : passe à la ligne s'il est long, sans
+        # rien couper (le ticket s'allonge d'autant).
+        wrap = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap)
+        needed = painter.fontMetrics().boundingRect(QRect(0, 0, cw[0] - 4, 1000), wrap, line["label"]).height()
+        label_h = max(h_body, needed + 4)
+        painter.drawText(QRect(cx[0], y, cw[0] - 4, label_h), wrap, line["label"])
         painter.drawText(QRect(cx[1], y, cw[1], h_body),
                          Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
                          str(line["qty"]))
@@ -613,7 +621,7 @@ def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
         painter.drawText(QRect(cx[3], y, cw[3], h_body),
                          Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
                          _da(line["total_cents"]))
-        y += h_body
+        y += label_h
 
         painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DotLine))
         painter.drawLine(0, y + 2, W, y + 2)
