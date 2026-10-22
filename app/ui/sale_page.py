@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import datetime
+import json
 
 from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QMessageBox,
     QStyledItemDelegate,
+    QTabBar,
     QComboBox,
     QDialog,
     QFrame,
@@ -28,6 +31,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import session_scope
+from app.paths import get_data_dir
+from pathlib import Path
+
 from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
@@ -41,6 +47,16 @@ MONTH_NAMES_FR = [
 DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 SEARCH_VISIBLE_ROWS = 8  # hauteur de la liste des résultats de recherche (en produits)
+MAX_OPEN_SALES = 5  # ventes en cours en même temps (onglets)
+
+
+def _pending_sales_path() -> Path:
+    """Ventes en cours (onglets), gardées si MobiDesk est fermé."""
+    return get_data_dir() / "pending_sales.json"
+
+
+def _empty_cart() -> dict:
+    return {"reseller_id": None, "remise_da": 0.0, "lines": []}
 _RESULT_INFO_ROLE = Qt.ItemDataRole.UserRole + 1  # (stock, prix gros en centimes)
 
 
@@ -324,7 +340,11 @@ class PaymentDialog(FramelessDialog):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class SalePage(QWidget):
-    """Page vente comptoir — réinitialisée après chaque vente validée."""
+    """Page vente comptoir. Plusieurs ventes peuvent être en cours en même
+    temps, une par onglet (ex. un revendeur qui hésite pendant qu'on sert un
+    client) : l'écran affiche le panier de l'onglet actif, les autres sont
+    gardés en mémoire — et dans pending_sales.json, pour les retrouver après
+    une fermeture de MobiDesk."""
 
     sale_completed = Signal()
 
@@ -332,8 +352,13 @@ class SalePage(QWidget):
         super().__init__()
         self._line_rows: list[tuple[int, int, int, ModernSpinBox, ModernDoubleSpinBox]] = []
         self._display_choices: list[tuple[int, str, str, str, int, int, int]] = []
+        self._carts: list[dict] = [_empty_cart()]
+        self._current = 0
+        self._loading = False  # pendant le chargement d'un panier dans l'écran
+        self._save_timer = None
         self._build_ui()
         self._reload_products()
+        self._restore_pending_sales()
 
     def _reload_products(self) -> None:
         with session_scope() as session:
@@ -369,9 +394,50 @@ class SalePage(QWidget):
     # ──────────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        from PySide6.QtCore import QTimer
+
         root = QVBoxLayout(self)
         root.setSpacing(0)
         root.setContentsMargins(0, 0, 0, 0)
+
+        # ── ONGLETS : une vente en cours par onglet ───────────────────
+        tabs_row = QFrame()
+        tabs_row.setStyleSheet("QFrame { background: #11111f; }")
+        tl = QHBoxLayout(tabs_row)
+        tl.setContentsMargins(16, 6, 16, 0)
+        tl.setSpacing(6)
+        self.sale_tabs = QTabBar()
+        self.sale_tabs.setTabsClosable(True)
+        self.sale_tabs.setExpanding(False)
+        self.sale_tabs.setDrawBase(False)
+        self.sale_tabs.setStyleSheet(
+            "QTabBar::tab { background: #2d2d44; color: #cbd5e1; border: none; padding: 8px 14px;"
+            " margin-right: 4px; border-top-left-radius: 8px; border-top-right-radius: 8px;"
+            " font-weight: 600; }"
+            "QTabBar::tab:selected { background: #1a1a2e; color: #ffffff; border-top: 3px solid #2563eb; }"
+            "QTabBar::tab:hover { color: #ffffff; }"
+        )
+        self.sale_tabs.addTab("")
+        self.sale_tabs.currentChanged.connect(self._on_tab_changed)
+        self.sale_tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        tl.addWidget(self.sale_tabs)
+        self.new_sale_btn = QPushButton("＋  Nouvelle vente en parallèle")
+        self.new_sale_btn.setToolTip("Servir un autre client sans perdre le panier en cours")
+        self.new_sale_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.new_sale_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #93c5fd; border: 1px dashed #3b82f6;"
+            " border-radius: 6px; padding: 6px 12px; font-weight: 700; margin-bottom: 4px; }"
+            "QPushButton:hover { background: #1e3a8a; color: white; }"
+        )
+        self.new_sale_btn.clicked.connect(self._new_sale_tab)
+        tl.addWidget(self.new_sale_btn)
+        tl.addStretch()
+        root.addWidget(tabs_row)
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(700)
+        self._save_timer.timeout.connect(self.save_pending_sales)
 
         # ── HEADER ────────────────────────────────────────────────────
         header = QFrame()
@@ -438,6 +504,7 @@ class SalePage(QWidget):
             "border-radius: 4px; padding: 6px 10px; font-size: 14px; min-width: 200px; }"
             "QComboBox::drop-down { border: none; width: 20px; }"
         )
+        self.reseller_combo.currentIndexChanged.connect(self._on_cart_changed)
         reseller_col.addWidget(self.reseller_combo)
         hl.addWidget(self.reseller_widget)
 
@@ -789,6 +856,7 @@ class SalePage(QWidget):
         n = self.lines_table.rowCount()
         self.count_label.setText(f"Nombre de produits : {n}" if n > 0 else "Panier vide")
         self.confirm_btn.setText(f"→  Passer au paiement  —  {format_da(net)}")
+        self._on_cart_changed()
 
     # ──────────────────────────────────────────────────────────────────
     # Paiement
@@ -888,7 +956,7 @@ class SalePage(QWidget):
             self.error_label.setText(str(error))
             return
 
-        self._clear_cart()
+        self._finish_current_sale()
         self._reload_products()
         self.sale_completed.emit()
 
@@ -896,3 +964,162 @@ class SalePage(QWidget):
             from app.ui.ticket_dialog import TicketPreviewDialog
             dlg = TicketPreviewDialog(batch_id=batch_id, parent=None)
             dlg.exec()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Ventes en parallèle (onglets)
+    # ──────────────────────────────────────────────────────────────────
+
+    def _snapshot(self) -> dict:
+        """Panier affiché à l'écran → données."""
+        return {
+            "reseller_id": self.reseller_combo.currentData(),
+            "remise_da": self.remise_spin.value(),
+            "lines": [
+                {"display_id": d_id, "qty": qty.value(), "price_da": price.value()}
+                for d_id, _ret, _who, qty, price in self._line_rows
+            ],
+        }
+
+    def _load_cart(self, cart: dict) -> None:
+        """Données → panier affiché à l'écran."""
+        self._loading = True
+        try:
+            self.lines_table.setRowCount(0)
+            self._line_rows.clear()
+            self.error_label.setText("")
+            index = self.reseller_combo.findData(cart.get("reseller_id"))
+            self.reseller_combo.setCurrentIndex(max(index, 0))
+            self.remise_spin.setValue(float(cart.get("remise_da") or 0))
+            choices = {c[0]: c for c in self._display_choices}
+            for line in cart.get("lines", []):
+                choice = choices.get(line.get("display_id"))
+                if choice is None:
+                    continue  # produit supprimé entre-temps
+                d_id, ref, label, cat, ret, who, qs = choice
+                self._add_line_row(d_id, ref, label, ret, who, cat, qs)
+                _d, _r, _w, qty_spin, price_spin = self._line_rows[-1]
+                qty_spin.setValue(int(line.get("qty") or 1))
+                price_spin.setValue(float(line.get("price_da") or 0))
+        finally:
+            self._loading = False
+        self._update_total()
+
+    def _tab_title(self, index: int) -> str:
+        cart = self._snapshot() if index == self._current else self._carts[index]
+        title = f"🛒  Vente {index + 1}"
+        reseller_id = cart.get("reseller_id")
+        if reseller_id is not None:
+            name = self.reseller_combo.itemText(self.reseller_combo.findData(reseller_id))
+            if name:
+                title += f"  ·  {name.split('  ·  ')[0][:18]}"
+        count = len(cart.get("lines", []))
+        if count:
+            title += f"  ({count} art.)"
+        return title
+
+    def _refresh_tab_titles(self) -> None:
+        for index in range(self.sale_tabs.count()):
+            self.sale_tabs.setTabText(index, self._tab_title(index))
+        self.new_sale_btn.setEnabled(self.sale_tabs.count() < MAX_OPEN_SALES)
+
+    def _on_cart_changed(self, *_args) -> None:
+        if self._loading or not hasattr(self, "sale_tabs"):
+            return
+        self._carts[self._current] = self._snapshot()
+        self._refresh_tab_titles()
+        if self._save_timer is not None:
+            self._save_timer.start()
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self._loading or index < 0 or index == self._current or index >= len(self._carts):
+            return
+        self._carts[self._current] = self._snapshot()
+        self._current = index
+        self._load_cart(self._carts[index])
+        self._refresh_tab_titles()
+        self.search_input.setFocus()
+
+    def _new_sale_tab(self) -> None:
+        if self.sale_tabs.count() >= MAX_OPEN_SALES:
+            return
+        self._carts[self._current] = self._snapshot()
+        self._carts.append(_empty_cart())
+        self._loading = True
+        self.sale_tabs.addTab("")
+        self._loading = False
+        self.sale_tabs.setCurrentIndex(len(self._carts) - 1)
+
+    def _remove_tab(self, index: int) -> None:
+        """Retire l'onglet `index` (sans confirmation) et affiche un autre
+        panier ; il reste toujours au moins un onglet."""
+        if len(self._carts) == 1:
+            self._carts[0] = _empty_cart()
+            self._load_cart(self._carts[0])
+            self._refresh_tab_titles()
+            self.save_pending_sales()
+            return
+        if index != self._current:
+            self._carts[self._current] = self._snapshot()
+        self._carts.pop(index)
+        self._loading = True
+        self.sale_tabs.removeTab(index)
+        self._loading = False
+        self._current = min(self.sale_tabs.currentIndex(), len(self._carts) - 1)
+        self._load_cart(self._carts[self._current])
+        self._refresh_tab_titles()
+        self.save_pending_sales()
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        cart = self._snapshot() if index == self._current else self._carts[index]
+        if cart.get("lines"):
+            answer = QMessageBox.question(
+                self, "Annuler la vente",
+                f"La vente {index + 1} contient {len(cart['lines'])} produit(s).\n"
+                "Voulez-vous vraiment l'annuler ?",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._remove_tab(index)
+
+    def _finish_current_sale(self) -> None:
+        """Vente validée : son onglet se ferme (ou se vide si c'est le seul)."""
+        self._remove_tab(self._current)
+
+    # --- conservation des ventes en cours -----------------------------
+
+    def save_pending_sales(self) -> None:
+        """Enregistre les ventes en cours (paniers non vides) dans
+        pending_sales.json — appelé après chaque changement (avec un court
+        délai) et à la fermeture de MobiDesk."""
+        if not hasattr(self, "sale_tabs"):
+            return
+        self._carts[self._current] = self._snapshot()
+        carts = [cart for cart in self._carts if cart.get("lines")]
+        try:
+            path = _pending_sales_path()
+            if carts:
+                path.write_text(json.dumps({"carts": carts}, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif path.exists():
+                path.unlink()
+        except OSError:
+            pass  # sans gravité : les paniers restent à l'écran
+
+    def _restore_pending_sales(self) -> None:
+        try:
+            data = json.loads(_pending_sales_path().read_text(encoding="utf-8"))
+            carts = [cart for cart in data.get("carts", []) if cart.get("lines")][:MAX_OPEN_SALES]
+        except (OSError, ValueError, AttributeError):
+            carts = []
+        if not carts:
+            self._refresh_tab_titles()
+            return
+        self._carts = carts
+        self._loading = True
+        while self.sale_tabs.count() < len(carts):
+            self.sale_tabs.addTab("")
+        self.sale_tabs.setCurrentIndex(0)
+        self._loading = False
+        self._current = 0
+        self._load_cart(self._carts[0])
+        self._refresh_tab_titles()
+

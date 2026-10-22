@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Fermeture de MobiDesk : sauvegarde cloud s'il y a eu des
         changements (option « à la fermeture » de la sauvegarde)."""
+        self.sale_page.save_pending_sales()  # ventes en cours (onglets)
         if not self._close_backup_done:
             self._close_backup_done = True
             config = load_backup_config()
@@ -196,6 +197,7 @@ class MainWindow(QMainWindow):
     def _backup_on_session_end(self, _manager) -> None:
         """Windows s'éteint : pas le temps d'afficher une fenêtre, on envoie
         la sauvegarde en attendant au plus 20 secondes."""
+        self.sale_page.save_pending_sales()
         if self._close_backup_done:
             return
         self._close_backup_done = True
