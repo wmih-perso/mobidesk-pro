@@ -11,6 +11,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPrinterInfo
 from PySide6.QtWidgets import QMessageBox
 
 from app.database import session_scope
+from app.labels import article_label
 from app.models import Display, StockMovement
 from app.money import format_balance_ticket
 from app.printer_config import PAPER_LABEL, PAPER_ROLL, PAPER_SHEET, load_printer_config, paper_description
@@ -20,14 +21,6 @@ from app.ticket_config import load_ticket_config
 def _da(cents: int) -> str:
     """Centimes → chaîne DA sans suffixe (ex: 250000 → '2 500')."""
     return f"{round(cents / 100):,}".replace(",", " ")
-
-
-def article_label(category: str, phone_model: str, reference: str = "") -> str:
-    """Libellé d'un article sur le ticket : catégorie en 3 lettres + modèle
-    compatible (ex. « AFF P20 LITE ») ; la référence si le modèle est vide."""
-    cat3 = (category or "")[:3].upper()
-    designation = (phone_model or "").strip() or (reference or "").strip()
-    return f"{cat3} {designation}".strip() or "?"
 
 
 def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict | None:

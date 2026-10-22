@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import session_scope
+from app.labels import article_label
 from app.money import format_da
 from app.returns import (
     SETTLEMENT_LABELS,
@@ -215,7 +216,7 @@ class ReturnsPage(QWidget):
                     doc.kind,
                     contact_name(doc),
                     ", ".join(
-                        f"{line.quantity} × {line.display.reference}"
+                        f"{line.quantity} × {article_label(line.display.category, line.display.phone_model, line.display.reference)}"
                         + (" (déf.)" if line.condition == "defective" else "")
                         for line in doc.lines
                     ),

@@ -329,7 +329,7 @@ class CustomerReturnDialog(_ReturnDialogBase):
         self.sales_table.setRowCount(len(self._sales))
         for row, sale in enumerate(self._sales):
             products = ", ".join(
-                f"{line.quantity} × {line.reference}" for line in sale.lines
+                f"{line.quantity} × {line.label}" for line in sale.lines
             )
             _cell(self.sales_table, row, 0, _fmt_date(sale.date))
             _cell(self.sales_table, row, 1, f"#{sale.batch_id:06d}")
@@ -350,7 +350,7 @@ class CustomerReturnDialog(_ReturnDialogBase):
         lines = sale.lines if sale else []
         self.lines_table.setRowCount(len(lines))
         for row, line in enumerate(lines):
-            _cell(self.lines_table, row, 0, f"{line.reference} — {line.designation}")
+            _cell(self.lines_table, row, 0, f"{line.label}  ({line.reference})")
             _cell(self.lines_table, row, 1, str(line.quantity), right=True)
             _cell(self.lines_table, row, 2, str(line.returned), right=True)
             _cell(self.lines_table, row, 3, format_da(line.unit_price_cents), right=True)
@@ -585,7 +585,7 @@ class SupplierReturnDialog(_ReturnDialogBase):
             _cell(self.purchases_table, row, 1, purchase.contact_name)
             _cell(self.purchases_table, row, 2, purchase.invoice_number or f"(n° interne #{purchase.batch_id:06d})")
             _cell(self.purchases_table, row, 3, ", ".join(
-                f"{line.quantity} × {line.reference}" for line in purchase.lines
+                f"{line.quantity} × {line.label}" for line in purchase.lines
             ))
             _cell(self.purchases_table, row, 4, str(purchase.piece_count), right=True)
             _cell(self.purchases_table, row, 5, format_da(purchase.total_cents), right=True)
@@ -603,7 +603,7 @@ class SupplierReturnDialog(_ReturnDialogBase):
         table = self.purchase_lines_table
         table.setRowCount(len(lines))
         for row, line in enumerate(lines):
-            _cell(table, row, 0, f"{line.reference} — {line.designation}")
+            _cell(table, row, 0, f"{line.label}  ({line.reference})")
             _cell(table, row, 1, str(line.quantity), right=True)
             _cell(table, row, 2, str(line.returned), right=True)
             _cell(table, row, 3, format_da(line.unit_price_cents), right=True)
@@ -621,7 +621,7 @@ class SupplierReturnDialog(_ReturnDialogBase):
         table = self.defective_table
         table.setRowCount(len(pending))
         for row, defective in enumerate(pending):
-            _cell(table, row, 0, f"{defective.reference} — {defective.designation}")
+            _cell(table, row, 0, f"{defective.label}  ({defective.reference})")
             _cell(table, row, 1, defective.customer_name)
             _cell(table, row, 2, defective.returned_at.strftime("%d/%m/%Y"))
             _cell(table, row, 3, str(defective.remaining), right=True)

@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Display, Reseller, ReturnDoc, ReturnLine, StockBatch, StockMovement, Supplier
 from app.services import StockError, get_display
+from app.labels import article_label
 from app.search import matches
 
 CUSTOMER_SETTLEMENTS = ("debt", "cash")
@@ -79,6 +80,7 @@ class ReturnableLine:
     returnable: int
     unit_price_cents: int  # prix de vente (client) ou d'achat (fournisseur)
     unit_cost_cents: int  # coût d'achat
+    label: str = ""  # catégorie + modèle compatible (ex. « AFF P20 LITE »)
 
 
 @dataclass
@@ -180,6 +182,7 @@ def list_sales_for_return(
                     display_id=m.display_id,
                     reference=m.display.reference,
                     designation=_designation(m.display),
+                    label=article_label(m.display.category, m.display.phone_model, m.display.reference),
                     category=m.display.category,
                     quantity=sold,
                     returned=already,
@@ -254,6 +257,7 @@ def list_purchases_for_return(
                     display_id=m.display_id,
                     reference=m.display.reference,
                     designation=_designation(m.display),
+                    label=article_label(m.display.category, m.display.phone_model, m.display.reference),
                     category=m.display.category,
                     quantity=bought,
                     returned=already,
@@ -290,6 +294,7 @@ class PendingDefective:
     unit_cost_cents: int
     customer_name: str
     returned_at: datetime.datetime
+    label: str = ""
 
 
 def list_pending_defectives(session: Session) -> list[PendingDefective]:
@@ -323,6 +328,7 @@ def list_pending_defectives(session: Session) -> list[PendingDefective]:
                 display_id=line.display_id,
                 reference=line.display.reference,
                 designation=_designation(line.display),
+                label=article_label(line.display.category, line.display.phone_model, line.display.reference),
                 category=line.display.category,
                 remaining=remaining,
                 unit_cost_cents=line.unit_cost_cents,

@@ -58,6 +58,7 @@ class _ModernCombo(QComboBox):
         painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "▾")
 
 from app.database import session_scope
+from app.labels import article_label
 from app.money import format_da
 from app.ui.frameless_dialog import FramelessDialog
 from app.returns import list_returns_for_batch, returned_qty_for_batch
@@ -229,7 +230,9 @@ class SaleBatchDetailDialog(FramelessDialog):
             returned = returned_qty_for_batch(session, batch_id)
             docs = list_returns_for_batch(session, batch_id, "customer")
             doc_lines = [
-                (doc.id, line.quantity, line.display.reference, line.condition)
+                (doc.id, line.quantity,
+                 article_label(line.display.category, line.display.phone_model, line.display.reference),
+                 line.condition)
                 for doc in docs for line in doc.lines
             ]
             returned_cents = sum(doc.amount_cents for doc in docs)
@@ -390,7 +393,8 @@ class MovementDetailDialog(FramelessDialog):
         with session_scope() as session:
             docs = list_returns_for_batch(session, self._row["batch_id"], "supplier")
             lines = [
-                f"  ↩ Bon R{doc.id} : {line.quantity} × {line.display.reference}"
+                f"  ↩ Bon R{doc.id} : {line.quantity} × "
+                f"{article_label(line.display.category, line.display.phone_model, line.display.reference)}"
                 for doc in docs for line in doc.lines
             ]
         self._ret_section.setVisible(bool(lines))
