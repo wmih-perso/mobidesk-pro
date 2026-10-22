@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.money import format_da
 from app.period import PERIOD_CHOICES, bounds_for_period
+from app.printing import article_label
 from app.services import list_sales, sum_profit_cents, sum_return_deduction_cents
 from app.ui.widgets import ALIGN_RIGHT, EmptyState, apply_card_shadow, right_align_headers
 
@@ -89,7 +90,8 @@ class ProfitTab(QWidget):
         self.sales_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
-        self.sales_table.horizontalHeader().setStretchLastSection(True)
+        # La colonne Produit (catégorie + modèle, parfois long) prend la place restante.
+        self.sales_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.sales_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         right_align_headers(self.sales_table, MONEY_COLUMNS)
         table_layout.addWidget(self.sales_table, stretch=1)
@@ -212,7 +214,8 @@ class ProfitTab(QWidget):
             self._current_rows = [
                 (
                     m.created_at.strftime("%d/%m/%Y %H:%M"),
-                    m.display.reference,
+                    # Catégorie + modèle compatible, comme sur le ticket (ex. « AFF P20 LITE »).
+                    article_label(m.display.category, m.display.phone_model, m.display.reference),
                     SALE_PRICE_TYPE_LABELS.get(m.sale_price_type, ""),
                     abs(m.change_quantity),
                     format_da(m.unit_purchase_price_cents),
