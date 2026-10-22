@@ -205,7 +205,18 @@ def print_sale_ticket(
 
 
 SHEET_MARGIN_MM = 10  # une imprimante de bureau n'imprime pas jusqu'au bord
-ROLL_MARGIN_MM = 2
+THERMAL_DPI = 203  # résolution des imprimantes à tickets (XP-80C…) et Niimbot
+
+
+def roll_printable_mm(paper_width_mm: float) -> float:
+    """Largeur réellement imprimable d'un rouleau : 72 mm sur 80 mm,
+    48 mm sur 58 mm (tête d'impression des imprimantes thermiques)."""
+    return 72.0 if paper_width_mm >= 80 else 48.0 if paper_width_mm >= 58 else paper_width_mm - 4
+
+
+def _roll_dots(cfg: dict) -> int:
+    """Largeur du ticket en points de l'imprimante thermique (576 pour 80 mm)."""
+    return round(roll_printable_mm(float(cfg["ticket_width_mm"])) / 25.4 * THERMAL_DPI)
 CUT_PADDING = 10  # espace (unités du ticket) entre le ticket et le pointillé
 
 
@@ -217,9 +228,10 @@ def _page_spec(cfg: dict, ticket_height: int) -> tuple[float, float, float]:
         return 210.0, 297.0, SHEET_MARGIN_MM
     if paper == PAPER_ROLL:
         width = float(cfg["ticket_width_mm"])
-        printable = width - 2 * ROLL_MARGIN_MM
-        height = ticket_height * printable / TICKET_WIDTH + 2 * ROLL_MARGIN_MM + 5
-        return width, height, ROLL_MARGIN_MM
+        printable = roll_printable_mm(width)
+        margin = (width - printable) / 2
+        height = ticket_height * printable / TICKET_WIDTH + 2 * margin + 5
+        return width, height, margin
     return float(cfg["label_width_mm"]), float(cfg["label_height_mm"]), 1.0
 
 
@@ -325,10 +337,16 @@ def print_test_ticket(parent=None, cfg: dict | None = None) -> bool:
 TICKET_WIDTH = 300
 
 
+# Ticket thermique : tout le texte en gras (traits de 2 points au lieu d'un,
+# lisibles sur une tête thermique). Courier New gras a la même largeur que
+# le normal : la mise en page ne change pas.
+_heavy_text = False
+
+
 def _font(size: int, bold: bool = False) -> QFont:
     font = QFont("Courier New")
     font.setPixelSize(size)
-    font.setBold(bold)
+    font.setBold(bold or _heavy_text)
     return font
 
 
@@ -342,12 +360,41 @@ def _ticket_height(data: dict) -> int:
         painter.end()
 
 
+def thermal_ticket_image(data: dict, width_dots: int) -> QImage:
+    """Ticket dessiné en noir et blanc pur (sans gris ni lissage), à la
+    résolution de l'imprimante thermique : un point de l'image = un point de
+    la tête d'impression. Le texte reste net — les gris du lissage
+    deviendraient des pointillés flous sur une imprimante qui ne fait que
+    du noir."""
+    height = max(1, _ticket_height(data))
+    scale = width_dots / TICKET_WIDTH
+    global _heavy_text
+    image = QImage(width_dots, max(1, round(height * scale)), QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.white)
+    painter = QPainter(image)
+    _heavy_text = True
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, False)
+        painter.scale(scale, scale)
+        _draw_ticket(painter, data, TICKET_WIDTH)
+    finally:
+        _heavy_text = False
+        painter.end()
+    return image.convertToFormat(
+        QImage.Format.Format_Mono,
+        Qt.ImageConversionFlag.MonoOnly | Qt.ImageConversionFlag.ThresholdDither,
+    )
+
+
 def _render_ticket(device, data: dict, cfg: dict, copies: int = 1) -> bool:
     """Imprime `data` sur `device` (QPrinter ou QPdfWriter) selon le type
     de papier : réduit pour tenir sur une étiquette, à taille réelle sur
-    une feuille A4 (avec un pointillé de découpe) ou sur un rouleau."""
+    une feuille A4 (avec un pointillé de découpe) ou sur un rouleau
+    (image noir et blanc à la résolution de l'imprimante thermique)."""
     height = max(1, _ticket_height(data))
     paper = cfg.get("paper", PAPER_LABEL)
+    thermal = thermal_ticket_image(data, _roll_dots(cfg)) if paper == PAPER_ROLL else None
     painter = QPainter()
     if not painter.begin(device):
         return False
@@ -367,7 +414,13 @@ def _render_ticket(device, data: dict, cfg: dict, copies: int = 1) -> bool:
                 painter.drawRect(QRect(0, 0, box_w - 1, box_h - 1))
                 painter.translate(CUT_PADDING, CUT_PADDING)
             elif paper == PAPER_ROLL:
-                painter.scale(viewport.width() / TICKET_WIDTH, viewport.width() / TICKET_WIDTH)
+                # Image posée sur toute la largeur imprimable, sans lissage :
+                # à 203 ppp, un point de l'image = un point de l'imprimante.
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+                target_h = round(thermal.height() * viewport.width() / thermal.width())
+                painter.drawImage(QRect(0, 0, viewport.width(), target_h), thermal)
+                painter.restore()
+                continue
             else:
                 scale = min(viewport.width() / TICKET_WIDTH, viewport.height() / height)
                 painter.translate((viewport.width() - TICKET_WIDTH * scale) / 2, 0)
@@ -511,7 +564,7 @@ def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
                          _da(line["total_cents"]))
         y += h_body
 
-        painter.setPen(QPen(Qt.GlobalColor.lightGray, 1, Qt.PenStyle.DotLine))
+        painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DotLine))
         painter.drawLine(0, y + 2, W, y + 2)
         painter.setPen(QPen(Qt.GlobalColor.black, 1))
         y += 8

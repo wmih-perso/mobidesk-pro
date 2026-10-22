@@ -127,51 +127,73 @@ def _prune_old_backups(client, bucket: str, prefix: str, keep_last: int) -> None
         client.delete_object(Bucket=bucket, Key=obj["Key"])
 
 
+def perform_backup(config: dict) -> tuple[bool, str]:
+    """Copie la base et l'envoie au stockage S3 (bloquant). Mémorise le
+    résultat (record_backup_result) et le renvoie (succès, message)."""
+    tmp = None
+    try:
+        db_path = get_database_path()
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"stock_backup_{timestamp}.db"
+        tmp = _CONFIG_DIR / backup_name
+        # API de sauvegarde SQLite : copie cohérente même si l'application
+        # écrit dans la base au même moment (contrairement à une copie
+        # brute du fichier).
+        source = sqlite3.connect(db_path)
+        target = sqlite3.connect(tmp)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+
+        client = _make_client(config)
+        bucket = config["bucket_name"]
+        prefix = config.get("prefix", "mobidesk-backups/")
+        key = f"{prefix}{backup_name}"
+
+        client.upload_file(str(tmp), bucket, key)
+        _prune_old_backups(client, bucket, prefix, config.get("keep_last", 30))
+        success, message = True, f"Sauvegarde envoyée : {backup_name}"
+    except Exception as exc:
+        success, message = False, f"Échec de la sauvegarde : {exc}"
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass  # copie temporaire verrouillée : sans gravité
+    record_backup_result(success, message)
+    return success, message
+
+
 def upload_backup(on_done: Callable[[bool, str], None], config: dict | None = None) -> None:
-    """Copie la DB et l'uploade vers le stockage S3. Non-bloquant.
+    """perform_backup dans un thread (non bloquant).
 
     `on_done(succès, message)` est appelé depuis le thread d'envoi : côté
     interface, passer par un signal Qt (voir app/ui/backup_panel.py) avant
-    de toucher aux widgets. Le résultat est aussi mémorisé dans la config
-    (record_backup_result)."""
+    de toucher aux widgets."""
     if config is None:
         config = load_backup_config()
+    threading.Thread(target=lambda: on_done(*perform_backup(config)), daemon=True).start()
 
-    def _run() -> None:
-        tmp = None
-        try:
-            db_path = get_database_path()
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_name = f"stock_backup_{timestamp}.db"
-            tmp = _CONFIG_DIR / backup_name
-            # API de sauvegarde SQLite : copie cohérente même si l'application
-            # écrit dans la base au même moment (contrairement à une copie
-            # brute du fichier).
-            source = sqlite3.connect(db_path)
-            target = sqlite3.connect(tmp)
-            try:
-                source.backup(target)
-            finally:
-                target.close()
-                source.close()
 
-            client = _make_client(config)
-            bucket = config["bucket_name"]
-            prefix = config.get("prefix", "mobidesk-backups/")
-            key = f"{prefix}{backup_name}"
-
-            client.upload_file(str(tmp), bucket, key)
-            _prune_old_backups(client, bucket, prefix, config.get("keep_last", 30))
-            success, message = True, f"Sauvegarde envoyée : {backup_name}"
-        except Exception as exc:
-            success, message = False, f"Échec de la sauvegarde : {exc}"
-        finally:
-            if tmp is not None:
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass  # copie temporaire verrouillée : sans gravité
-        record_backup_result(success, message)
-        on_done(success, message)
-
-    threading.Thread(target=_run, daemon=True).start()
+def is_close_backup_due(config: dict) -> bool:
+    """Sauvegarde à faire à la fermeture de MobiDesk (ou à l'arrêt du PC) ?
+    Oui si la sauvegarde automatique est activée, l'option « à la
+    fermeture » cochée, et si la base a changé depuis la dernière
+    sauvegarde réussie — inutile d'envoyer (et de faire tourner les
+    anciennes sauvegardes) quand rien n'a bougé."""
+    if not config.get("enabled") or not config.get("backup_on_close", True):
+        return False
+    if not _has_credentials(config):
+        return False
+    last_success = config.get("last_success_at")
+    if not last_success:
+        return True
+    try:
+        last = datetime.datetime.fromisoformat(last_success)
+        modified = datetime.datetime.fromtimestamp(get_database_path().stat().st_mtime)
+    except (ValueError, OSError):
+        return True
+    return modified > last

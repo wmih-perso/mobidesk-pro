@@ -38,6 +38,8 @@ MONTH_NAMES_FR = [
 ]
 DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
+SEARCH_VISIBLE_ROWS = 8  # hauteur de la liste des résultats de recherche (en produits)
+
 
 def _spin_cell(widget: QWidget, v_margin: int = 4) -> QWidget:
     wrapper = QWidget()
@@ -461,7 +463,6 @@ class SalePage(QWidget):
 
         # Résultats de recherche
         self.search_results = QListWidget()
-        self.search_results.setFixedHeight(130)
         self.search_results.setVisible(False)
         self.search_results.setStyleSheet(
             "QListWidget { background: white; border: 1px solid #e0e0e0; border-radius: 6px; "
@@ -471,6 +472,13 @@ class SalePage(QWidget):
             "QListWidget::item:hover { background: #f8faff; }"
         )
         self.search_results.itemClicked.connect(self._on_result_clicked)
+        # Toujours la hauteur de 8 produits (même s'il y a moins de
+        # résultats) ; au-delà, la liste défile.
+        self.search_results.ensurePolished()  # applique le style (marges des lignes)
+        self.search_results.addItem("—")
+        row_height = self.search_results.sizeHintForRow(0)
+        self.search_results.clear()
+        self.search_results.setFixedHeight(row_height * SEARCH_VISIBLE_ROWS + 2 * self.search_results.frameWidth())
         bl.addWidget(self.search_results)
 
         # Tableau — 7 colonnes

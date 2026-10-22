@@ -96,3 +96,27 @@ def test_upload_backup_sends_a_consistent_copy(config_dir, monkeypatch):
     assert key.startswith("p/stock_backup_") and value == "données"
     assert backup.load_backup_config()["last_backup_ok"] is True
     assert list(config_dir.glob("stock_backup_*.db")) == []  # copie temporaire supprimée
+
+
+def test_close_backup_only_when_database_changed(config_dir, monkeypatch):
+    import os
+    import time
+
+    db_path = config_dir / "stock.db"
+    db_path.write_bytes(b"x")
+    monkeypatch.setattr(backup, "get_database_path", lambda: db_path)
+    config = {**CREDENTIALS, "enabled": True}
+
+    assert backup.is_close_backup_due(config)  # jamais sauvegardé
+
+    config["last_success_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+    past = time.time() - 3600
+    os.utime(db_path, (past, past))
+    assert not backup.is_close_backup_due(config)  # rien changé depuis
+
+    os.utime(db_path, None)  # base modifiée maintenant
+    config["last_success_at"] = (datetime.datetime.now() - datetime.timedelta(minutes=5)).isoformat()
+    assert backup.is_close_backup_due(config)
+
+    assert not backup.is_close_backup_due({**config, "backup_on_close": False})
+    assert not backup.is_close_backup_due({**config, "enabled": False})

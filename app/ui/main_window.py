@@ -12,6 +12,7 @@ from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -44,9 +45,9 @@ from app.services import (
     list_displays,
     list_movements,
 )
-from app.backup import is_backup_due, load_backup_config
+from app.backup import is_backup_due, is_close_backup_due, load_backup_config
 from app.ticket_config import load_ticket_config, save_ticket_config
-from app.ui.backup_panel import BackupPanel, run_backup
+from app.ui.backup_panel import BackupPanel, ClosingBackupDialog, run_backup
 from app.ui.capital_page import CapitalPage
 from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
@@ -162,11 +163,41 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._start_clock()
         self._start_backup_timer()
+        self._close_backup_done = False
+        # Arrêt / déconnexion de Windows : dernière sauvegarde avant de quitter.
+        QApplication.instance().commitDataRequest.connect(self._backup_on_session_end)
         self.refresh()
 
     # ------------------------------------------------------------------
     # Plein écran permanent
     # ------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        """Fermeture de MobiDesk : sauvegarde cloud s'il y a eu des
+        changements (option « à la fermeture » de la sauvegarde)."""
+        if not self._close_backup_done:
+            self._close_backup_done = True
+            config = load_backup_config()
+            if is_close_backup_due(config):
+                ClosingBackupDialog(config, parent=self).exec()
+        super().closeEvent(event)
+
+    def _backup_on_session_end(self, _manager) -> None:
+        """Windows s'éteint : pas le temps d'afficher une fenêtre, on envoie
+        la sauvegarde en attendant au plus 20 secondes."""
+        if self._close_backup_done:
+            return
+        self._close_backup_done = True
+        config = load_backup_config()
+        if not is_close_backup_due(config):
+            return
+        import threading
+
+        from app.backup import perform_backup
+
+        worker = threading.Thread(target=perform_backup, args=(config,), daemon=True)
+        worker.start()
+        worker.join(timeout=20)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

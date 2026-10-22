@@ -192,6 +192,8 @@ class BackupPanel(QWidget):
             )
             if config.get("enabled"):
                 auto = f"Automatique : <b style='color:#059669;'>activée à {config.get('hour', 20)}h00</b>"
+                if config.get("backup_on_close", True):
+                    auto += " <b style='color:#059669;'>+ à la fermeture</b>"
             else:
                 auto = "Automatique : <b style='color:#b45309;'>désactivée</b>"
             self._summary_label.setText(f"{account}  ·  {auto}")
@@ -347,6 +349,12 @@ class BackupConfigDialog(FramelessDialog):
         )
         self._enabled_check.setChecked(bool(self._config.get("enabled")))
         grid.addWidget(self._enabled_check, 6, 1)
+        self._on_close_check = QCheckBox(
+            "Sauvegarder aussi à la fermeture de MobiDesk et à l'arrêt du PC\n"
+            "(seulement s'il y a eu des changements depuis la dernière sauvegarde)"
+        )
+        self._on_close_check.setChecked(bool(self._config.get("backup_on_close", True)))
+        grid.addWidget(self._on_close_check, 7, 1)
         layout.addLayout(grid)
 
         self._status_label = QLabel("")
@@ -402,6 +410,7 @@ class BackupConfigDialog(FramelessDialog):
             "hour": self._hour_spin.value(),
             "keep_last": self._keep_spin.value(),
             "enabled": self._enabled_check.isChecked(),
+            "backup_on_close": self._on_close_check.isChecked(),
         }
 
     def _missing_fields(self, config: dict) -> list[str]:
@@ -435,3 +444,43 @@ class BackupConfigDialog(FramelessDialog):
         # Relire le fichier : les résultats de sauvegarde ont pu changer.
         save_backup_config({**load_backup_config(), **config})
         self.accept()
+
+
+class ClosingBackupDialog(FramelessDialog):
+    """Sauvegarde cloud lancée à la fermeture de MobiDesk : la fenêtre se
+    ferme toute seule à la fin (ou au bout de 2 minutes) ; « Fermer sans
+    attendre » quitte tout de suite."""
+
+    TIMEOUT_MS = 120_000
+
+    def __init__(self, config: dict, parent=None) -> None:
+        from PySide6.QtCore import QTimer
+
+        super().__init__(parent)
+        self.setMinimumWidth(420)
+        self.setModal(True)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header("☁  Sauvegarde avant fermeture", height=54))
+        body = QWidget()
+        body.setObjectName("DialogBody")
+        body.setStyleSheet("QWidget#DialogBody { background: white; }")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(12)
+        text = QLabel("Envoi de la base vers le cloud… MobiDesk se ferme dès que c'est terminé.")
+        text.setWordWrap(True)
+        layout.addWidget(text)
+        row = QHBoxLayout()
+        row.addStretch()
+        skip = QPushButton("Fermer sans attendre")
+        skip.setObjectName("SecondaryButton")
+        skip.clicked.connect(self.accept)
+        row.addWidget(skip)
+        layout.addLayout(row)
+        root.addWidget(body)
+
+        QTimer.singleShot(self.TIMEOUT_MS, self.accept)
+        run_backup(lambda _ok, _msg: self.accept(), config=config)
+
