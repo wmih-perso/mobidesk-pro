@@ -28,7 +28,11 @@ def list_displays(
     only_active: bool = True,
     only_low_stock: bool = False,
     category: str | None = None,
+    brand: str | None = None,
+    stock_state: str | None = None,
 ) -> list[Display]:
+    """`stock_state` : "low" (au minimum ou en dessous), "out" (rupture,
+    0 pièce) ou "in" (au moins une pièce) ; None = tous."""
     stmt = select(Display)
 
     if only_active:
@@ -39,6 +43,16 @@ def list_displays(
 
     if category:
         stmt = stmt.where(Display.category == category)
+
+    if brand:
+        stmt = stmt.where(Display.brand == brand)
+
+    if stock_state == "low":
+        stmt = stmt.where(Display.quantity <= Display.min_stock)
+    elif stock_state == "out":
+        stmt = stmt.where(Display.quantity <= 0)
+    elif stock_state == "in":
+        stmt = stmt.where(Display.quantity > 0)
 
     stmt = stmt.order_by(Display.brand, Display.phone_model)
     displays = list(session.scalars(stmt).all())
@@ -51,6 +65,14 @@ def list_displays(
             lambda d: (d.reference, d.category, d.brand, d.phone_model, d.quality),
         )
     return displays
+
+
+def list_brands(session: Session) -> list[str]:
+    """Marques des produits actifs, triées (pour le filtre du stock)."""
+    rows = session.scalars(
+        select(Display.brand).where(Display.is_active.is_(True), Display.brand != "").distinct()
+    ).all()
+    return sorted({brand.strip() for brand in rows if brand and brand.strip()}, key=str.lower)
 
 
 def count_low_stock_displays(session: Session) -> int:

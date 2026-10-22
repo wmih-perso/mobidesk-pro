@@ -473,3 +473,21 @@ def test_list_displays_search_by_words_in_any_order(db_session):
     for query in ("samsung a17", "a17 samsung", "sam a17", "aff a17"):
         assert [d.reference for d in list_displays(db_session, search=query)] == ["AFF-A17"], query
     assert len(list_displays(db_session, search="samsung galaxy")) == 2
+
+
+def test_list_displays_filters_by_brand_and_stock_state(db_session):
+    from app.services import list_brands
+
+    _create_sample(db_session, reference="A", brand="Samsung", quantity=0, min_stock=2)
+    _create_sample(db_session, reference="B", brand="Samsung", quantity=1, min_stock=2)
+    _create_sample(db_session, reference="C", brand="Huawei", quantity=9, min_stock=2)
+
+    def refs(**kwargs):
+        return sorted(d.reference for d in list_displays(db_session, **kwargs))
+
+    assert refs(brand="Samsung") == ["A", "B"]
+    assert refs(stock_state="low") == ["A", "B"]
+    assert refs(stock_state="out") == ["A"]
+    assert refs(stock_state="in") == ["B", "C"]
+    assert refs(brand="Samsung", stock_state="in") == ["B"]
+    assert list_brands(db_session) == ["Huawei", "Samsung"]

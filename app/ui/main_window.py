@@ -39,6 +39,8 @@ from app.services import (
     StockError,
     UNKNOWN_CATEGORY_COLOR,
     category_colors,
+    list_brands,
+    list_categories,
     count_low_stock_displays,
     count_movements,
     deactivate_display,
@@ -72,6 +74,7 @@ from app.ui.widgets import (
     add_clear_button,
     apply_card_shadow,
     category_badge,
+    color_dot_icon,
     right_align_headers,
 )
 from app.updater import (
@@ -129,6 +132,14 @@ PRICE_COLUMN_STYLES = {
     DISPLAY_COLUMNS.index("Prix vente (détail)"): ("#15803d", "🟢 Prix détail"),
     DISPLAY_COLUMNS.index("Prix vente (gros)"): ("#1d4ed8", "🔵 Prix gros"),
 }
+
+# Filtre « état du stock » du tableau des produits : (libellé, valeur).
+STOCK_FILTERS = [
+    ("Stock : tous", None),
+    ("⚠  Stock faible", "low"),
+    ("⛔  Rupture (0)", "out"),
+    ("✓  En stock", "in"),
+]
 
 MOVEMENT_COLUMNS = ["Date", "Pièce", "Mouvement", "Avant", "Après", "Motif", ""]
 
@@ -461,6 +472,10 @@ class MainWindow(QMainWindow):
             "⚠️", "Stock bas", "0", "Produits en alerte",
             accent="#ef4444", accent_bg="#fef2f2", sparkline_seed=4,
         )
+        # Clic sur la carte : n'afficher que les produits en stock faible.
+        self.low_stock_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.low_stock_card.setToolTip("Afficher les produits en stock faible")
+        self.low_stock_card.mousePressEvent = lambda _event: self._set_only_low_stock(True)
         self.stock_value_card = IconStatCard(
             "📊", "Pièces en stock", "0", "Unités disponibles",
             accent="#7c3aed", accent_bg="#f5f3ff", sparkline_seed=7,
@@ -500,7 +515,40 @@ class MainWindow(QMainWindow):
 
         search_row.addStretch()
         search_row.addWidget(self.search_input)
+        search_row.addSpacing(10)
+
+        # Filtres : se combinent entre eux et avec la recherche.
+        def _filter_combo(width: int) -> QComboBox:
+            combo = QComboBox()
+            combo.setMinimumHeight(38)
+            combo.setMinimumWidth(width)
+            combo.currentIndexChanged.connect(self._on_filters_changed)
+            return combo
+
+        self.category_filter = _filter_combo(190)
+        self.category_filter.setToolTip("Filtrer par catégorie")
+        search_row.addWidget(self.category_filter)
+        search_row.addSpacing(8)
+        self.stock_filter = _filter_combo(170)
+        self.stock_filter.setToolTip("Filtrer par état du stock")
+        self.stock_filter.blockSignals(True)  # le tableau n'existe pas encore
+        for label, value in STOCK_FILTERS:
+            self.stock_filter.addItem(label, value)
+        self.stock_filter.blockSignals(False)
+        search_row.addWidget(self.stock_filter)
+        search_row.addSpacing(8)
+        self.brand_filter = _filter_combo(170)
+        self.brand_filter.setToolTip("Filtrer par marque")
+        search_row.addWidget(self.brand_filter)
+        search_row.addSpacing(8)
+        self.reset_filters_btn = QPushButton("✕  Réinitialiser")
+        self.reset_filters_btn.setObjectName("SecondaryButton")
+        self.reset_filters_btn.setToolTip("Retirer la recherche et tous les filtres")
+        self.reset_filters_btn.clicked.connect(self._reset_filters)
+        self.reset_filters_btn.setVisible(False)
+        search_row.addWidget(self.reset_filters_btn)
         search_row.addStretch()
+        self._reload_filter_choices()
 
         outer_layout.addLayout(self._build_stat_cards())
         outer_layout.addLayout(search_row)
@@ -1276,10 +1324,11 @@ class MainWindow(QMainWindow):
                 self.stack.setCurrentIndex(9)
 
     def _set_only_low_stock(self, value: bool) -> None:
-        if value == self._only_low_stock:
-            return
+        """Filtre « Stock faible » (carte Stock bas, alerte) ou retour à tous."""
         self._only_low_stock = value
-        self._on_filters_changed()
+        index = self.stock_filter.findData("low" if value else None)
+        if index != self.stock_filter.currentIndex():
+            self.stock_filter.setCurrentIndex(index)  # relance le rafraîchissement
 
     def _active_nav_key(self) -> str:
         idx = self.stack.currentIndex()
@@ -1335,14 +1384,56 @@ class MainWindow(QMainWindow):
         if self.stack.currentIndex() == 9:
             self.capital_page.refresh()
 
+    def _reload_filter_choices(self) -> None:
+        """(Re)remplit les listes Catégorie et Marque en gardant le choix."""
+        with session_scope() as session:
+            categories = [(c.name, c.color) for c in list_categories(session)]
+            brands = list_brands(session)
+        for combo, all_label, entries in (
+            (self.category_filter, "Catégorie : toutes", categories),
+            (self.brand_filter, "Marque : toutes", [(b, None) for b in brands]),
+        ):
+            current = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(all_label, None)
+            for name, color in entries:
+                if color:
+                    combo.addItem(color_dot_icon(color), name, name)
+                else:
+                    combo.addItem(name, name)
+            combo.setCurrentIndex(max(combo.findData(current), 0))
+            combo.blockSignals(False)
+
+    def _filters_active(self) -> bool:
+        return bool(
+            self.search_input.text().strip()
+            or self.category_filter.currentData()
+            or self.stock_filter.currentData()
+            or self.brand_filter.currentData()
+        )
+
+    def _reset_filters(self) -> None:
+        for combo in (self.category_filter, self.stock_filter, self.brand_filter):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        self.search_input.clear()  # relance le rafraîchissement
+        self._on_filters_changed()
+
     def _refresh_displays(self) -> None:
+        self._reload_filter_choices()
         with session_scope() as session:
             all_active = list_displays(session, only_active=True)
             self._filtered_displays = list_displays(
                 session,
                 search=self.search_input.text(),
-                only_low_stock=self._only_low_stock,
+                category=self.category_filter.currentData(),
+                brand=self.brand_filter.currentData(),
+                stock_state=self.stock_filter.currentData(),
             )
+        self.reset_filters_btn.setVisible(self._filters_active())
+        with session_scope() as session:
             total_count = len(all_active)
             low_stock_count = count_low_stock_displays(session)
             stock_value_cents = sum(d.purchase_price_cents * d.quantity for d in all_active)
