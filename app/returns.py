@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Display, Reseller, ReturnDoc, ReturnLine, StockBatch, StockMovement, Supplier
 from app.services import StockError, get_display
+from app.search import matches
 
 CUSTOMER_SETTLEMENTS = ("debt", "cash")
 SUPPLIER_SETTLEMENTS = ("debt", "cash", "exchange")
@@ -124,9 +125,10 @@ def _group_by_batch(movements: list[StockMovement]) -> dict[int, list[StockMovem
     return batches
 
 
-def _matches(m: StockMovement, search: str) -> bool:
-    text = f"{m.display.reference} {_designation(m.display)} {m.display.category}".lower()
-    return search in text
+def _operation_text(items: list[StockMovement]) -> str:
+    return " ".join(
+        f"{m.display.reference} {_designation(m.display)} {m.display.category}" for m in items
+    )
 
 
 def list_sales_for_return(
@@ -166,7 +168,7 @@ def list_sales_for_return(
 
     result: list[ReturnableOperation] = []
     for batch_id, items in _group_by_batch(movements).items():
-        if search and not any(_matches(m, search) for m in items):
+        if search and not matches(search, _operation_text(items)):
             continue
         lines = []
         for m in sorted(items, key=lambda m: m.id):
@@ -239,8 +241,8 @@ def list_purchases_for_return(
     result: list[ReturnableOperation] = []
     for batch_id, items in _group_by_batch(movements).items():
         first = items[0]
-        header_text = f"{first.invoice_number} {first.supplier.name if first.supplier else ''}".lower()
-        if search and search not in header_text and not any(_matches(m, search) for m in items):
+        supplier_name = first.supplier.name if first.supplier else ""
+        if search and not matches(search, first.invoice_number, supplier_name, _operation_text(items)):
             continue
         lines = []
         for m in sorted(items, key=lambda m: m.id):
@@ -744,7 +746,7 @@ def list_return_docs(
             )
             return f"r{doc.id} {doc.source_batch_id or ''} {contact} {products} {doc.note}".lower()
 
-        docs = [doc for doc in docs if search in _text(doc)]
+        docs = [doc for doc in docs if matches(search, _text(doc))]
     return docs
 
 

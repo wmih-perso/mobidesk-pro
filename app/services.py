@@ -34,14 +34,6 @@ def list_displays(
     if only_active:
         stmt = stmt.where(Display.is_active.is_(True))
 
-    if search:
-        pattern = f"%{search.strip()}%"
-        stmt = stmt.where(
-            Display.reference.ilike(pattern)
-            | Display.brand.ilike(pattern)
-            | Display.phone_model.ilike(pattern)
-        )
-
     if only_low_stock:
         stmt = stmt.where(Display.quantity <= Display.min_stock)
 
@@ -49,7 +41,16 @@ def list_displays(
         stmt = stmt.where(Display.category == category)
 
     stmt = stmt.order_by(Display.brand, Display.phone_model)
-    return list(session.scalars(stmt).all())
+    displays = list(session.scalars(stmt).all())
+    if search.strip():
+        # Recherche par mots (app/search.py) : tous les mots, n'importe où.
+        from app.search import filter_and_rank
+
+        displays = filter_and_rank(
+            search, displays,
+            lambda d: (d.reference, d.category, d.brand, d.phone_model, d.quality),
+        )
+    return displays
 
 
 def count_low_stock_displays(session: Session) -> int:
@@ -645,13 +646,13 @@ def list_sale_batches(
 
         # Filtre texte : produit (référence ou désignation), revendeur ou caissier
         if search:
-            s = search.lower()
-            matched = s in reseller_name.lower() or s in cashier_name.lower() or any(
-                s in (m.display.reference or "").lower()
-                or s in f"{m.display.brand} {m.display.phone_model}".lower()
+            from app.search import matches
+
+            products = " ".join(
+                f"{m.display.reference} {m.display.category} {m.display.brand} {m.display.phone_model}"
                 for m in items
             )
-            if not matched:
+            if not matches(search, reseller_name, cashier_name, products):
                 continue
 
         result.append({

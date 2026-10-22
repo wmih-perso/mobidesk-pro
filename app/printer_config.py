@@ -30,6 +30,9 @@ DEFAULTS = {
     "printer_name": "",  # vide = imprimante par défaut de Windows
     "paper": PAPER_LABEL,
     "ticket_width_mm": 80,
+    # Rouleau : réglages de secours si le pilote décale le ticket.
+    "roll_offset_mm": 0,  # décalage horizontal (+ = vers la droite)
+    "roll_print_width_mm": 0,  # largeur imprimée, 0 = automatique (72 / 48 mm)
     "label_width_mm": 50,
     "label_height_mm": 30,
     "copies": 1,
@@ -52,7 +55,13 @@ def paper_description(cfg: dict) -> str:
     if paper == PAPER_SHEET:
         return f"Ticket {cfg['ticket_width_mm']} mm sur feuille A4 (à découper)"
     if paper == PAPER_ROLL:
-        return f"Rouleau de ticket {cfg['ticket_width_mm']} mm"
+        text = f"Rouleau de ticket {cfg['ticket_width_mm']} mm"
+        adjustments = []
+        if cfg.get("roll_offset_mm"):
+            adjustments.append(f"décalage {cfg['roll_offset_mm']:+d} mm")
+        if cfg.get("roll_print_width_mm"):
+            adjustments.append(f"largeur {cfg['roll_print_width_mm']} mm")
+        return text + (f" ({', '.join(adjustments)})" if adjustments else "")
     return f"Étiquette {cfg['label_width_mm']} × {cfg['label_height_mm']} mm"
 
 

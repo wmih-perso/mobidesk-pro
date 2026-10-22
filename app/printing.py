@@ -205,7 +205,7 @@ def print_sale_ticket(
 
 
 SHEET_MARGIN_MM = 10  # une imprimante de bureau n'imprime pas jusqu'au bord
-THERMAL_DPI = 203  # résolution des imprimantes à tickets (XP-80C…) et Niimbot
+THERMAL_DPI = 203.2  # 8 points par mm : imprimantes à tickets (XP-80C…) et Niimbot
 
 
 def roll_printable_mm(paper_width_mm: float) -> float:
@@ -214,9 +214,16 @@ def roll_printable_mm(paper_width_mm: float) -> float:
     return 72.0 if paper_width_mm >= 80 else 48.0 if paper_width_mm >= 58 else paper_width_mm - 4
 
 
+def roll_print_width_mm(cfg: dict) -> float:
+    """Largeur imprimée du ticket sur rouleau : réglage manuel, sinon la
+    largeur imprimable standard (72 mm sur 80 mm, 48 mm sur 58 mm)."""
+    manual = float(cfg.get("roll_print_width_mm") or 0)
+    return manual if manual > 0 else roll_printable_mm(float(cfg["ticket_width_mm"]))
+
+
 def _roll_dots(cfg: dict) -> int:
-    """Largeur du ticket en points de l'imprimante thermique (576 pour 80 mm)."""
-    return round(roll_printable_mm(float(cfg["ticket_width_mm"])) / 25.4 * THERMAL_DPI)
+    """Largeur du ticket en points de l'imprimante thermique (576 pour 72 mm)."""
+    return round(roll_print_width_mm(cfg) / 25.4 * THERMAL_DPI)
 CUT_PADDING = 10  # espace (unités du ticket) entre le ticket et le pointillé
 
 
@@ -227,11 +234,13 @@ def _page_spec(cfg: dict, ticket_height: int) -> tuple[float, float, float]:
     if paper == PAPER_SHEET:
         return 210.0, 297.0, SHEET_MARGIN_MM
     if paper == PAPER_ROLL:
+        # Pleine page sans marge : c'est le ticket qui est centré dans la
+        # zone que le pilote déclare imprimable (voir _render_ticket). Une
+        # marge ici s'ajoutait à celle du pilote et décalait le ticket.
         width = float(cfg["ticket_width_mm"])
-        printable = roll_printable_mm(width)
-        margin = (width - printable) / 2
-        height = ticket_height * printable / TICKET_WIDTH + 2 * margin + 5
-        return width, height, margin
+        printable = roll_print_width_mm(cfg)
+        height = ticket_height * printable / TICKET_WIDTH + 8
+        return width, height, 0.0
     return float(cfg["label_width_mm"]), float(cfg["label_height_mm"]), 1.0
 
 
@@ -244,6 +253,8 @@ def apply_page_layout(device, cfg: dict, ticket_height: int) -> None:
         QPageSize.SizeMatchPolicy.ExactMatch,
     ))
     device.setPageOrientation(QPageLayout.Orientation.Portrait)
+    if cfg.get("paper") == PAPER_ROLL and hasattr(device, "setFullPage"):
+        device.setFullPage(True)  # repère = bord du papier (QPrinter seulement)
     device.setPageMargins(QMarginsF(margin, margin, margin, margin), QPageLayout.Unit.Millimeter)
 
 
@@ -369,7 +380,8 @@ def thermal_ticket_image(data: dict, width_dots: int) -> QImage:
     height = max(1, _ticket_height(data))
     scale = width_dots / TICKET_WIDTH
     global _heavy_text
-    image = QImage(width_dots, max(1, round(height * scale)), QImage.Format.Format_RGB32)
+    ruler = 60 if data.get("frame") else 0  # place pour la règle du ticket de test
+    image = QImage(width_dots, max(1, round(height * scale) + ruler), QImage.Format.Format_RGB32)
     image.fill(Qt.GlobalColor.white)
     painter = QPainter(image)
     _heavy_text = True
@@ -378,6 +390,11 @@ def thermal_ticket_image(data: dict, width_dots: int) -> QImage:
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, False)
         painter.scale(scale, scale)
         _draw_ticket(painter, data, TICKET_WIDTH)
+        if data.get("frame"):  # ticket de test : bords et règle pour régler
+            painter.resetTransform()
+            painter.setPen(QPen(Qt.GlobalColor.black, 2))
+            painter.drawRect(QRect(1, 1, image.width() - 3, image.height() - 3))
+            _draw_mm_ruler(painter, image.width(), image.height())
     finally:
         _heavy_text = False
         painter.end()
@@ -385,6 +402,27 @@ def thermal_ticket_image(data: dict, width_dots: int) -> QImage:
         QImage.Format.Format_Mono,
         Qt.ImageConversionFlag.MonoOnly | Qt.ImageConversionFlag.ThresholdDither,
     )
+
+
+def _draw_mm_ruler(painter: QPainter, width: int, height: int) -> None:
+    """Règle graduée (mm) en bas du ticket de test thermique : un trait tous
+    les 5 mm, un nombre tous les 10 mm. Le premier et le dernier nombre
+    lisibles indiquent de combien le ticket est coupé à gauche / à droite."""
+    dots_per_mm = THERMAL_DPI / 25.4
+    base = height - 6
+    painter.setPen(QPen(Qt.GlobalColor.black, 2))
+    painter.drawLine(0, base, width, base)
+    font = QFont("Courier New")
+    font.setPixelSize(18)
+    font.setBold(True)
+    painter.setFont(font)
+    mm = 0
+    while mm * dots_per_mm <= width:
+        x = round(mm * dots_per_mm)
+        painter.drawLine(x, base - (22 if mm % 10 == 0 else 12), x, base)
+        if mm % 10 == 0:
+            painter.drawText(QRect(x - 20, base - 46, 40, 20), int(Qt.AlignmentFlag.AlignCenter), str(mm))
+        mm += 5
 
 
 def _render_ticket(device, data: dict, cfg: dict, copies: int = 1) -> bool:
@@ -414,11 +452,24 @@ def _render_ticket(device, data: dict, cfg: dict, copies: int = 1) -> bool:
                 painter.drawRect(QRect(0, 0, box_w - 1, box_h - 1))
                 painter.translate(CUT_PADDING, CUT_PADDING)
             elif paper == PAPER_ROLL:
-                # Image posée sur toute la largeur imprimable, sans lissage :
-                # à 203 ppp, un point de l'image = un point de l'imprimante.
+                # Image sans lissage (à 203 ppp, un point de l'image = un point
+                # de l'imprimante), centrée dans la zone imprimable déclarée
+                # par le pilote, ± le décalage réglé à la main.
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-                target_h = round(thermal.height() * viewport.width() / thermal.width())
-                painter.drawImage(QRect(0, 0, viewport.width(), target_h), thermal)
+                layout = QPageLayout(device.pageLayout())
+                layout.setUnits(QPageLayout.Unit.Millimeter)
+                minimum = layout.minimumMargins()
+                paper_w = viewport.width() / dots_per_mm
+                printable_left = minimum.left()
+                printable_w = max(1.0, paper_w - minimum.left() - minimum.right())
+                target_w = min(roll_print_width_mm(cfg), printable_w)
+                left_mm = printable_left + (printable_w - target_w) / 2 + float(cfg.get("roll_offset_mm") or 0)
+                target = QRect(
+                    round(left_mm * dots_per_mm), round(minimum.top() * dots_per_mm),
+                    round(target_w * dots_per_mm),
+                    round(thermal.height() * target_w * dots_per_mm / thermal.width()),
+                )
+                painter.drawImage(target, thermal)
                 painter.restore()
                 continue
             else:

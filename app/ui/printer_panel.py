@@ -103,7 +103,7 @@ class PrinterConfigDialog(FramelessDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(700)
         self.setModal(True)
         cfg = load_printer_config()
 
@@ -164,6 +164,36 @@ class PrinterConfigDialog(FramelessDialog):
         grid.addWidget(self._ticket_width_label, 2, 0)
         grid.addWidget(self._ticket_width_combo, 2, 1)
 
+        # Rouleau : réglages de secours si le pilote décale ou coupe le ticket.
+        adjust_row = QHBoxLayout()
+        self._offset_spin = QSpinBox()
+        self._offset_spin.setRange(-25, 25)
+        self._offset_spin.setSuffix(" mm")
+        self._offset_spin.setValue(int(cfg.get("roll_offset_mm") or 0))
+        self._offset_spin.setMinimumHeight(36)
+        self._offset_spin.setFixedWidth(100)
+        self._offset_spin.setToolTip("Négatif = vers la gauche, positif = vers la droite")
+        adjust_row.addWidget(QLabel("Décalage :"))
+        adjust_row.addWidget(self._offset_spin)
+        adjust_row.addSpacing(16)
+        self._print_width_spin = QSpinBox()
+        self._print_width_spin.setRange(0, 80)
+        self._print_width_spin.setSpecialValueText("Auto")
+        self._print_width_spin.setSuffix(" mm")
+        self._print_width_spin.setValue(int(cfg.get("roll_print_width_mm") or 0))
+        self._print_width_spin.setMinimumHeight(36)
+        self._print_width_spin.setFixedWidth(100)
+        self._print_width_spin.setToolTip("Auto = 72 mm sur un rouleau de 80 mm, 48 mm sur 58 mm")
+        adjust_row.addWidget(QLabel("Largeur imprimée :"))
+        adjust_row.addWidget(self._print_width_spin)
+        adjust_row.addStretch()
+        self._adjust_label = _lbl("Ajustement")
+        self._adjust_widgets = QWidget()
+        self._adjust_widgets.setLayout(adjust_row)
+        adjust_row.setContentsMargins(0, 0, 0, 0)
+        grid.addWidget(self._adjust_label, 3, 0)
+        grid.addWidget(self._adjust_widgets, 3, 1)
+
         size_row = QHBoxLayout()
         self._size_combo = QComboBox()
         self._size_combo.setMinimumHeight(36)
@@ -180,8 +210,8 @@ class PrinterConfigDialog(FramelessDialog):
         size_row.addStretch()
         self._size_label = _lbl("Taille d'étiquette")
         self._size_widgets = [self._size_combo, self._width_spin, times_label, self._height_spin]
-        grid.addWidget(self._size_label, 3, 0)
-        grid.addLayout(size_row, 3, 1)
+        grid.addWidget(self._size_label, 4, 0)
+        grid.addLayout(size_row, 4, 1)
         # findData ne reconnaît pas les tuples Python : on cherche l'index nous-mêmes.
         preset = (int(cfg["label_width_mm"]), int(cfg["label_height_mm"]))
         index = LABEL_PRESETS.index(preset) if preset in LABEL_PRESETS else self._size_combo.count() - 1
@@ -192,19 +222,19 @@ class PrinterConfigDialog(FramelessDialog):
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet("color: #64748b; font-size: 12px;")
-        grid.addWidget(self._hint, 4, 1)
+        grid.addWidget(self._hint, 5, 1)
 
         self._copies_spin = QSpinBox()
         self._copies_spin.setRange(1, 3)
         self._copies_spin.setValue(int(cfg.get("copies", 1)))
         self._copies_spin.setMinimumHeight(36)
         self._copies_spin.setFixedWidth(80)
-        grid.addWidget(_lbl("Exemplaires"), 5, 0)
-        grid.addWidget(self._copies_spin, 5, 1)
+        grid.addWidget(_lbl("Exemplaires"), 6, 0)
+        grid.addWidget(self._copies_spin, 6, 1)
 
         self._direct_check = QCheckBox("Impression directe (sans la fenêtre de choix de Windows)")
         self._direct_check.setChecked(bool(cfg.get("direct", True)))
-        grid.addWidget(self._direct_check, 6, 1)
+        grid.addWidget(self._direct_check, 7, 1)
         layout.addLayout(grid)
 
         self._paper_combo.currentIndexChanged.connect(self._on_paper_changed)
@@ -264,8 +294,10 @@ class PrinterConfigDialog(FramelessDialog):
             "pointillé : découpez le long du pointillé."
         ),
         PAPER_ROLL: (
-            "Pour une imprimante à tickets de caisse : le ticket est imprimé sur toute la "
-            "largeur du rouleau, et la page fait la longueur du ticket."
+            "Imprimante à tickets (XP-80C…) : ticket net en noir pur. Faites « Imprimer un "
+            "test » : le ticket a un cadre et une règle en mm. S'il est coupé ou décalé, "
+            "réglez le Décalage (ex. −10 mm s'il commence trop à droite) ou réduisez la "
+            "Largeur imprimée, puis refaites un test."
         ),
     }
 
@@ -274,10 +306,15 @@ class PrinterConfigDialog(FramelessDialog):
         is_label = paper == PAPER_LABEL
         self._ticket_width_label.setVisible(not is_label)
         self._ticket_width_combo.setVisible(not is_label)
+        is_roll = paper == PAPER_ROLL
+        self._adjust_label.setVisible(is_roll)
+        self._adjust_widgets.setVisible(is_roll)
         self._size_label.setVisible(is_label)
         for widget in self._size_widgets:
             widget.setVisible(is_label)
         self._hint.setText(self._HINTS[paper])
+        # Hauteur du texte d'aide selon sa longueur (sinon il est coupé).
+        self._hint.setMinimumHeight(self._hint.heightForWidth(500))
         self.adjustSize()
 
     def _form_config(self) -> dict:
@@ -286,6 +323,8 @@ class PrinterConfigDialog(FramelessDialog):
             "printer_name": self._printer_combo.currentData(),
             "paper": self._paper_combo.currentData(),
             "ticket_width_mm": self._ticket_width_combo.currentData(),
+            "roll_offset_mm": self._offset_spin.value(),
+            "roll_print_width_mm": self._print_width_spin.value(),
             "label_width_mm": self._width_spin.value(),
             "label_height_mm": self._height_spin.value(),
             "copies": self._copies_spin.value(),

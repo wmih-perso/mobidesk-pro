@@ -107,3 +107,23 @@ def test_preview_closes_after_printing(qt_app, config_file, monkeypatch, printed
     assert calls == [1]
     assert (dialog.result() == TicketPreviewDialog.DialogCode.Accepted) is closed
     assert dialog._print_btn.isEnabled() is not closed
+
+
+def test_roll_width_and_offset_settings(qt_app, config_file):
+    from app.printing import _roll_dots, roll_print_width_mm
+
+    cfg = {**printer_config.DEFAULTS, "paper": printer_config.PAPER_ROLL, "ticket_width_mm": 80}
+    assert roll_print_width_mm(cfg) == 72 and _roll_dots(cfg) == 576
+    assert roll_print_width_mm({**cfg, "ticket_width_mm": 58}) == 48
+    assert roll_print_width_mm({**cfg, "roll_print_width_mm": 66}) == 66
+    assert printer_config.paper_description({**cfg, "roll_offset_mm": -10}) == \
+        "Rouleau de ticket 80 mm (décalage -10 mm)"
+
+
+def test_thermal_ticket_is_pure_black_and_white(qt_app, config_file):
+    from PySide6.QtGui import QImage
+
+    from app.printing import test_ticket_data, thermal_ticket_image
+
+    image = thermal_ticket_image(test_ticket_data(), 576)
+    assert image.format() == QImage.Format.Format_Mono and image.width() == 576

@@ -31,6 +31,7 @@ from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
+from app.search import filter_and_rank
 
 MONTH_NAMES_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -595,18 +596,16 @@ class SalePage(QWidget):
     # ──────────────────────────────────────────────────────────────────
 
     def _on_search_changed(self, text: str) -> None:
-        text = text.strip().lower()
         self.search_results.clear()
-        if not text:
+        if not text.strip():
             self.search_results.setVisible(False)
             return
         already = {d_id for d_id, *_ in self._line_rows}
-        matches = [
-            (d_id, ref, label, cat, ret, who, qs)
-            for d_id, ref, label, cat, ret, who, qs in self._display_choices
-            if (text in ref.lower() or text in label.lower() or text in cat.lower())
-            and d_id not in already
-        ]
+        matches = filter_and_rank(
+            text,
+            [c for c in self._display_choices if c[0] not in already],
+            lambda c: (c[1], c[2], c[3]),  # référence, marque + modèle, catégorie
+        )
         if not matches:
             self.search_results.setVisible(False)
             return

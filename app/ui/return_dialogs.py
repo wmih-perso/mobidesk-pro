@@ -41,6 +41,7 @@ from app.returns import (
 from app.services import StockError, get_reseller, list_resellers, list_suppliers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernSpinBox, add_clear_button
+from app.search import matches
 
 COUNTER = "counter"  # valeur du combo « Client comptoir »
 
@@ -614,12 +615,8 @@ class SupplierReturnDialog(_ReturnDialogBase):
     def _reload_defectives(self) -> None:
         with session_scope() as session:
             pending = list_pending_defectives(session)
-        search = self.search_input.text().strip().lower()
-        if search:
-            pending = [
-                d for d in pending
-                if search in f"{d.reference} {d.designation} {d.category}".lower()
-            ]
+        search = self.search_input.text()
+        pending = [d for d in pending if matches(search, d.reference, d.designation, d.category)]
         self._defective_widgets = []
         table = self.defective_table
         table.setRowCount(len(pending))

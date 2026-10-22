@@ -39,6 +39,7 @@ from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers, list_suppliers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button, field_label
+from app.search import filter_and_rank
 
 # Motifs proposés pour un ajustement de stock (ni achat, ni vente).
 ADJUSTMENT_REASONS = [
@@ -212,19 +213,18 @@ class _BaseStockBatchDialog(FramelessDialog):
                 break
 
     def _on_search_changed(self, text: str) -> None:
-        text = text.strip().lower()
         self.search_results.clear()
 
-        if not text:
+        if not text.strip():
             self.search_results.setVisible(False)
             return
 
         already_added = {display_id for display_id, _spin, _price in self._line_rows}
-        matches = [
-            (display_id, label, price_cents)
-            for display_id, label, price_cents in self._display_choices
-            if text in label.lower() and display_id not in already_added
-        ]
+        matches = filter_and_rank(
+            text,
+            [c for c in self._display_choices if c[0] not in already_added],
+            lambda c: (c[1],),
+        )
 
         if not matches:
             self.search_results.setVisible(False)

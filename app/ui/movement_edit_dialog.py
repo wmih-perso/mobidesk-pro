@@ -33,6 +33,7 @@ from app.services import (
 )
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
+from app.search import filter_and_rank
 
 
 class MovementEditDialog(FramelessDialog):
@@ -233,18 +234,15 @@ class MovementEditDialog(FramelessDialog):
     # ------------------------------------------------------------------
 
     def _on_search_changed(self, text: str) -> None:
-        text = text.strip().lower()
         self._search_results.clear()
-        if not text:
+        if not text.strip():
             self._search_results.setVisible(False)
             return
 
         already = {d for d, _, _ in self._line_rows}
-        matches = [
-            (did, lbl, price)
-            for did, lbl, price in self._display_choices
-            if text in lbl.lower() and did not in already
-        ]
+        matches = filter_and_rank(
+            text, [c for c in self._display_choices if c[0] not in already], lambda c: (c[1],),
+        )
         if not matches:
             self._search_results.setVisible(False)
             return

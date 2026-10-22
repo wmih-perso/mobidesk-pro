@@ -464,3 +464,12 @@ def test_sale_batches_show_cashier_and_search_by_reseller_or_cashier(db_session,
     assert {b["cashier"] for b in list_sale_batches(db_session)} == {"Karim"}
     assert [b["reseller"] for b in list_sale_batches(db_session, search="amine")] == ["Boutique Amine"]
     assert len(list_sale_batches(db_session, search="karim")) == 2
+
+
+def test_list_displays_search_by_words_in_any_order(db_session):
+    _create_sample(db_session, reference="AFF-A17", brand="Samsung", phone_model="Galaxy A17")
+    _create_sample(db_session, reference="AFF-A18", brand="Samsung", phone_model="Galaxy A18")
+
+    for query in ("samsung a17", "a17 samsung", "sam a17", "aff a17"):
+        assert [d.reference for d in list_displays(db_session, search=query)] == ["AFF-A17"], query
+    assert len(list_displays(db_session, search="samsung galaxy")) == 2

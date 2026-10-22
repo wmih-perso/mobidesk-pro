@@ -24,6 +24,7 @@ from app.money import cents_to_da, da_to_cents, format_da
 from app.services import StockError, create_repair, get_repair, list_displays, update_repair
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
+from app.search import filter_and_rank
 
 PARTS_COLUMNS = ["Pièce", "Quantité", "Prix détail", ""]
 
@@ -233,11 +234,11 @@ class RepairDialog(FramelessDialog):
             return
 
         already_added = {display_id for display_id, _price_cents, _spin in self._part_rows}
-        matches = [
-            (display_id, label, price_cents)
-            for display_id, label, price_cents in self._display_choices
-            if text in label.lower() and display_id not in already_added
-        ]
+        matches = filter_and_rank(
+            text,
+            [c for c in self._display_choices if c[0] not in already_added],
+            lambda c: (c[1],),
+        )
 
         if not matches:
             self.part_search_results.setVisible(False)
