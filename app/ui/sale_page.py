@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import datetime
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QStyledItemDelegate,
     QComboBox,
     QDialog,
     QFrame,
@@ -40,6 +41,37 @@ MONTH_NAMES_FR = [
 DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 SEARCH_VISIBLE_ROWS = 8  # hauteur de la liste des résultats de recherche (en produits)
+_RESULT_INFO_ROLE = Qt.ItemDataRole.UserRole + 1  # (stock, prix gros en centimes)
+
+
+class _SearchResultDelegate(QStyledItemDelegate):
+    """Ligne de résultat : produit à gauche ; stock et prix gros alignés
+    en colonnes à droite (stock en rouge si rupture)."""
+
+    STOCK_WIDTH = 110
+    PRICE_WIDTH = 130
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        info = index.data(_RESULT_INFO_ROLE)
+        if not info:
+            return
+        quantity, price_cents = info
+        rect = option.rect.adjusted(0, 0, -16, 0)
+        price_rect = QRect(rect.right() - self.PRICE_WIDTH, rect.top(), self.PRICE_WIDTH, rect.height())
+        stock_rect = QRect(price_rect.left() - self.STOCK_WIDTH, rect.top(), self.STOCK_WIDTH, rect.height())
+        painter.save()
+        font = QFont(option.font)
+        painter.setFont(font)
+        painter.setPen(QColor("#dc2626") if quantity <= 0 else QColor("#6b7280"))
+        painter.drawText(stock_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                         "Rupture" if quantity <= 0 else f"Stock : {quantity}")
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#1d4ed8"))
+        painter.drawText(price_rect, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                         format_da(price_cents))
+        painter.restore()
 
 
 def _spin_cell(widget: QWidget, v_margin: int = 4) -> QWidget:
@@ -473,6 +505,7 @@ class SalePage(QWidget):
             "QListWidget::item:hover { background: #f8faff; }"
         )
         self.search_results.itemClicked.connect(self._on_result_clicked)
+        self.search_results.setItemDelegate(_SearchResultDelegate(self.search_results))
         # Toujours la hauteur de 8 produits (même s'il y a moins de
         # résultats) ; au-delà, la liste défile.
         self.search_results.ensurePolished()  # applique le style (marges des lignes)
@@ -613,6 +646,7 @@ class SalePage(QWidget):
             parts = [p for p in [cat, label, ref] if p]
             item = QListWidgetItem("  ·  ".join(parts))
             item.setData(Qt.ItemDataRole.UserRole, (d_id, ref, label, cat, ret, who, qs))
+            item.setData(_RESULT_INFO_ROLE, (qs, who))  # stock, prix gros
             self.search_results.addItem(item)
         self.search_results.setVisible(True)
 
