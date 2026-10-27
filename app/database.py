@@ -63,6 +63,7 @@ def _migrate_stock_movements_schema(engine) -> None:
             "supplier_balance_before_cents": "INTEGER NOT NULL DEFAULT 0",
             "return_id": "INTEGER",
             "invoice_number": "VARCHAR(50) NOT NULL DEFAULT ''",
+            "model_label": "VARCHAR(150) NOT NULL DEFAULT ''",
         }
 
         for column_name, ddl_type in columns_to_add.items():

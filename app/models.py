@@ -155,6 +155,9 @@ class StockMovement(Base):
     # N° de la facture du fournisseur, saisi lors d'un achat (facultatif).
     invoice_number: Mapped[str] = mapped_column(String(50), default="", server_default="")
 
+    # Modèle compatible choisi à la vente (ex. « 9A ») — vide si non précisé.
+    model_label: Mapped[str] = mapped_column(String(150), default="", server_default="")
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property

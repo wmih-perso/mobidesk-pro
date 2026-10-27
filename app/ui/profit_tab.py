@@ -215,7 +215,7 @@ class ProfitTab(QWidget):
                 (
                     m.created_at.strftime("%d/%m/%Y %H:%M"),
                     # Catégorie + modèle compatible, comme sur le ticket (ex. « AFF P20 LITE »).
-                    article_label(m.display.category, m.display.phone_model, m.display.reference),
+                    article_label(m.display.category, m.display.phone_model, m.display.reference, m.model_label),
                     SALE_PRICE_TYPE_LABELS.get(m.sale_price_type, ""),
                     abs(m.change_quantity),
                     format_da(m.unit_purchase_price_cents),

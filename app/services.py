@@ -228,6 +228,7 @@ def adjust_stock(
     reseller_id: int | None = None,
     movement_batch_id: int | None = None,
     invoice_number: str = "",
+    model_label: str = "",
 ) -> Display:
     """Ajoute ou retire une quantité du stock d'une pièce.
 
@@ -340,6 +341,7 @@ def adjust_stock(
             movement_batch_id=movement_batch_id,
             cashier_name=cashier_name,
             invoice_number=invoice_number.strip(),
+            model_label=model_label.strip(),
         )
     )
     session.flush()
@@ -351,7 +353,7 @@ def apply_stock_batch(
     *,
     direction: Literal[1, -1],
     reason: str,
-    lines: list[tuple[int, int, int | None]],
+    lines: list[tuple],
     is_sale: bool = False,
     sale_price_type: SalePriceType | None = None,
     supplier_id: int | None = None,
@@ -363,13 +365,15 @@ def apply_stock_batch(
     """Applique plusieurs lignes de mouvement de stock en une seule
     transaction atomique. Si `versement_cents` est fourni pour une vente
     revendeur, met à jour le solde du revendeur et annote les mouvements.
+    Chaque ligne est (display_id, quantité, prix) ou, en option,
+    (display_id, quantité, prix, modèle choisi).
     """
     if not lines:
         raise StockError("Ajoutez au moins un produit.")
 
     batch_id = _next_movement_batch_id(session)
     results = []
-    for display_id, quantity, unit_price_override in lines:
+    for display_id, quantity, unit_price_override, *extra in lines:
         display = adjust_stock(
             session,
             display_id,
@@ -383,6 +387,7 @@ def apply_stock_batch(
             reseller_id=reseller_id,
             movement_batch_id=batch_id,
             invoice_number=invoice_number,
+            model_label=(extra[0] if extra else "") if is_sale else "",
         )
         results.append(display)
 

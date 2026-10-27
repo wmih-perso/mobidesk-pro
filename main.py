@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.database import init_engine
+from app.single_instance import notify_running_instance, start_listening
 from app.ui.login_dialog import LoginDialog
 from app.ui.main_window import MainWindow
 
@@ -27,9 +28,14 @@ def _load_stylesheet() -> str:
 
 
 def main() -> int:
-    init_engine()
-
     app = QApplication(sys.argv)
+
+    # Une seule instance : si l'app est déjà ouverte, on la remet au premier plan.
+    if notify_running_instance():
+        return 0
+    instance_server = start_listening(app)  # noqa: F841 — à garder en vie
+
+    init_engine()
     if APP_ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 

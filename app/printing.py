@@ -72,7 +72,7 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
         for m in movements:
             display = session.get(Display, m.display_id)
             label = (
-                article_label(display.category, display.phone_model, display.reference)
+                article_label(display.category, display.phone_model, display.reference, m.model_label)
                 if display else "?"
             )
             qty = abs(m.change_quantity)

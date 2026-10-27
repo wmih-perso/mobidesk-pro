@@ -123,7 +123,7 @@ class DisplayDialog(FramelessDialog):
         grid.addWidget(self.reference_input, row, 0)
 
         self.phone_model_input = QLineEdit()
-        self.phone_model_input.setPlaceholderText("Ex : Galaxy A12")
+        self.phone_model_input.setPlaceholderText("Ex : 9A / 9C (plusieurs modèles séparés par /)")
         self._style_input(self.phone_model_input)
         grid.addWidget(self.phone_model_input, row, 2)
         row += 1
