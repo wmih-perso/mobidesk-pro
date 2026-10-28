@@ -27,7 +27,7 @@ from app.database import session_scope
 from app.money import format_da
 from app.period import PERIOD_CHOICES, bounds_for_period
 from app.labels import article_label
-from app.services import list_sales, sum_profit_cents, sum_return_deduction_cents
+from app.services import list_sales, sum_expenses_cents, sum_return_deduction_cents
 from app.ui.widgets import ALIGN_RIGHT, EmptyState, apply_card_shadow, right_align_headers
 
 SALE_COLUMNS = [
@@ -166,6 +166,21 @@ class ProfitTab(QWidget):
         ret_col.addWidget(self.returns_label)
         layout.addLayout(ret_col)
 
+        minus_lbl2 = QLabel("−")
+        minus_lbl2.setStyleSheet("font-size: 16px; color: #9ca3af; padding: 0 4px;")
+        layout.addWidget(minus_lbl2)
+
+        # Frais déduits (page Frais)
+        exp_col = QVBoxLayout()
+        exp_col.setSpacing(1)
+        exp_lbl = QLabel("Frais")
+        exp_lbl.setStyleSheet("color: #8991ac; font-weight: 600; font-size: 11px;")
+        exp_col.addWidget(exp_lbl)
+        self.expenses_label = QLabel("0 DA")
+        self.expenses_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #ef4444;")
+        exp_col.addWidget(self.expenses_label)
+        layout.addLayout(exp_col)
+
         eq_lbl = QLabel("=")
         eq_lbl.setStyleSheet("font-size: 16px; color: #9ca3af; padding: 0 4px;")
         layout.addWidget(eq_lbl)
@@ -227,12 +242,17 @@ class ProfitTab(QWidget):
             ]
             gross_cents = sum(m.profit_cents for m in sales)
             deduction_cents = sum_return_deduction_cents(session, start=start, end=end)
-            net_cents = gross_cents - deduction_cents
+            expenses_cents = sum_expenses_cents(session, start=start, end=end)
+            net_cents = gross_cents - deduction_cents - expenses_cents
 
         self.gross_profit_label.setText(format_da(gross_cents))
         self.returns_label.setText(format_da(deduction_cents))
         self.returns_label.setStyleSheet(
             f"font-size: 14px; font-weight: 700; color: {'#ef4444' if deduction_cents > 0 else '#9ca3af'};"
+        )
+        self.expenses_label.setText(format_da(expenses_cents))
+        self.expenses_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {'#ef4444' if expenses_cents > 0 else '#9ca3af'};"
         )
         self.total_profit_label.setText(format_da(net_cents))
         self._render_table()

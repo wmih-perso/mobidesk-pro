@@ -99,6 +99,8 @@ class Sidebar(QWidget):
         self._add_nav(layout, "profit", "Bénéfices")
         self._add_nav(layout, "capital", "Capital")
         self._buttons["capital"].setVisible(False)  # admin seulement (set_current_user)
+        self._add_nav(layout, "expenses", "Frais")
+        self._buttons["expenses"].setVisible(False)  # admin seulement (set_current_user)
         self._add_nav(layout, "returns", "Retours")
         self._add_nav(layout, "contacts", "Contacts")
         self._add_nav(layout, "categories", "Catégories")
@@ -205,6 +207,7 @@ class Sidebar(QWidget):
         """Montre/cache les boutons réservés à l'admin (Capital, Comptes)."""
         self._accounts_btn.setVisible(role == "admin")
         self._buttons["capital"].setVisible(role == "admin")
+        self._buttons["expenses"].setVisible(role == "admin")
 
     def set_low_stock_badge(self, count: int) -> None:
         """Met à jour le badge de stock faible — visible dans la barre de statut."""

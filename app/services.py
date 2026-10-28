@@ -12,7 +12,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Category, Display, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, User
+from app.models import Category, Display, Expense, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, User
 
 SalePriceType = Literal["retail", "wholesale"]
 
@@ -723,16 +723,109 @@ def sum_return_deduction_cents(
     return session.scalar(stmt) or 0
 
 
+EXPENSE_KINDS = ("Livraison", "Transport", "Emballage", "Autre")
+
+
+def _expense_bounds(stmt, start, end):
+    if start is not None:
+        stmt = stmt.where(Expense.expense_date >= start)
+    if end is not None:
+        stmt = stmt.where(Expense.expense_date <= end)
+    return stmt
+
+
+def list_expenses(
+    session: Session,
+    *,
+    start: datetime.datetime | None = None,
+    end: datetime.datetime | None = None,
+) -> list[Expense]:
+    """Frais de la période, du plus récent au plus ancien."""
+    stmt = _expense_bounds(select(Expense), start, end)
+    return list(session.scalars(stmt.order_by(Expense.expense_date.desc(), Expense.id.desc())).all())
+
+
+def sum_expenses_cents(
+    session: Session,
+    *,
+    start: datetime.datetime | None = None,
+    end: datetime.datetime | None = None,
+) -> int:
+    stmt = _expense_bounds(select(func.sum(Expense.amount_cents)), start, end)
+    return session.scalar(stmt) or 0
+
+
+def _check_expense(kind: str, amount_cents: int) -> str:
+    kind = (kind or "").strip() or "Autre"
+    if amount_cents <= 0:
+        raise StockError("Le montant du frais doit être supérieur à zéro.")
+    return kind
+
+
+def create_expense(
+    session: Session,
+    *,
+    expense_date: datetime.datetime,
+    kind: str,
+    amount_cents: int,
+    note: str = "",
+) -> Expense:
+    kind = _check_expense(kind, amount_cents)
+    from app import session as _session
+
+    expense = Expense(
+        expense_date=expense_date,
+        kind=kind,
+        amount_cents=amount_cents,
+        note=(note or "").strip(),
+        cashier_name=_session.get_current_cashier_name(),
+    )
+    session.add(expense)
+    session.flush()
+    return expense
+
+
+def update_expense(
+    session: Session,
+    expense_id: int,
+    *,
+    expense_date: datetime.datetime,
+    kind: str,
+    amount_cents: int,
+    note: str = "",
+) -> Expense:
+    kind = _check_expense(kind, amount_cents)
+    expense = session.get(Expense, expense_id)
+    if expense is None:
+        raise StockError("Ce frais n'existe plus.")
+    expense.expense_date = expense_date
+    expense.kind = kind
+    expense.amount_cents = amount_cents
+    expense.note = (note or "").strip()
+    session.flush()
+    return expense
+
+
+def delete_expense(session: Session, expense_id: int) -> None:
+    expense = session.get(Expense, expense_id)
+    if expense is None:
+        raise StockError("Ce frais n'existe plus.")
+    session.delete(expense)
+    session.flush()
+
+
 def sum_profit_cents(
     session: Session,
     *,
     start: datetime.datetime | None = None,
     end: datetime.datetime | None = None,
 ) -> int:
-    """Bénéfice net (en centimes) : ventes réelles moins retours reçus liés."""
+    """Bénéfice net (en centimes) : ventes réelles moins retours reçus liés
+    et moins les frais de la période."""
     gross = sum(m.profit_cents for m in list_sales(session, start=start, end=end))
     deduction = sum_return_deduction_cents(session, start=start, end=end)
-    return gross - deduction
+    expenses = sum_expenses_cents(session, start=start, end=end)
+    return gross - deduction - expenses
 
 
 def get_repair(session: Session, repair_id: int) -> Repair:

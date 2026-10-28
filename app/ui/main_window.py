@@ -51,6 +51,7 @@ from app.backup import is_backup_due, is_close_backup_due, load_backup_config
 from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel, ClosingBackupDialog, run_backup
 from app.ui.capital_page import CapitalPage
+from app.ui.expenses_page import ExpensesPage
 from app.ui.category_panel import CategoryPanel
 from app.ui.change_password_dialog import ChangePasswordDialog
 from app.ui.contacts_page import ContactsPage
@@ -263,6 +264,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.users_panel)
         self.capital_page = CapitalPage()                    # index 9 (admin)
         self.stack.addWidget(self.capital_page)
+        self.expenses_page = ExpensesPage()                  # index 10 (admin)
+        self.stack.addWidget(self.expenses_page)
 
         root_layout.addWidget(self._build_status_bar())
 
@@ -1324,6 +1327,11 @@ class MainWindow(QMainWindow):
             if _session.is_admin():
                 self.capital_page.refresh()
                 self.stack.setCurrentIndex(9)
+        elif page_key == "expenses":
+            from app import session as _session
+            if _session.is_admin():
+                self.expenses_page.refresh()
+                self.stack.setCurrentIndex(10)
 
     def _set_only_low_stock(self, value: bool) -> None:
         """Filtre « Stock faible » (carte Stock bas, alerte) ou retour à tous."""
@@ -1354,6 +1362,8 @@ class MainWindow(QMainWindow):
             return "accounts"
         if idx == 9:
             return "capital"
+        if idx == 10:
+            return "expenses"
         return "stock"
 
     # ------------------------------------------------------------------

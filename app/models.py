@@ -451,3 +451,19 @@ class CapitalStart(Base):
     @property
     def capital_cents(self) -> int:
         return self.stock_value_cents + self.cash_cents
+
+
+class Expense(Base):
+    """Frais (livraison, transport…) déduits du bénéfice net de la période
+    qui contient `expense_date`."""
+
+    __tablename__ = "expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    expense_date: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
+    kind: Mapped[str] = mapped_column(String(50), default="Autre")
+    amount_cents: Mapped[int] = mapped_column(default=0)
+    note: Mapped[str] = mapped_column(String(255), default="")
+    # Nom de la personne connectée, figé à la saisie.
+    cashier_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now)
