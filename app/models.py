@@ -60,6 +60,9 @@ class Display(Base):
     min_stock: Mapped[int] = mapped_column(default=1)
 
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Références et modèles des produits fusionnés dans celui-ci (un par
+    # ligne) — pour que la recherche retrouve encore l'ancienne référence.
+    aliases: Mapped[str] = mapped_column(Text, default="", server_default="")
     is_active: Mapped[bool] = mapped_column(default=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now)

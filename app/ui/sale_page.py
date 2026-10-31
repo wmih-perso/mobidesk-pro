@@ -356,6 +356,7 @@ class SalePage(QWidget):
         ] = []
         self._display_choices: list[tuple[int, str, str, str, int, int, int]] = []
         self._models_by_id: dict[int, list[str]] = {}  # modèles compatibles par produit
+        self._aliases_by_id: dict[int, str] = {}  # anciennes références (produits fusionnés)
         self._carts: list[dict] = [_empty_cart()]
         self._current = 0
         self._loading = False  # pendant le chargement d'un panier dans l'écran
@@ -380,6 +381,7 @@ class SalePage(QWidget):
                 for d in displays
             ]
             self._models_by_id = {d.id: split_models(d.phone_model) for d in displays}
+            self._aliases_by_id = {d.id: d.aliases for d in displays if d.aliases}
             resellers = list_resellers(session)
 
         current_id = self.reseller_combo.currentData() if hasattr(self, "reseller_combo") else None
@@ -712,7 +714,7 @@ class SalePage(QWidget):
         matches = filter_and_rank(
             text,
             [c for c in self._display_choices if c[0] not in already],
-            lambda c: (c[1], c[2], c[3]),  # référence, marque + modèle, catégorie
+            lambda c: (c[1], c[2], c[3], self._aliases_by_id.get(c[0], "")),  # référence, marque + modèle, catégorie, alias
         )
         if not matches:
             self.search_results.setVisible(False)

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QTableWidget,
@@ -32,6 +33,7 @@ from app.models import StockMovement
 from app.money import format_balance_ticket, format_da
 from app.returns import (
     create_customer_return,
+    LotShortageError,
     create_supplier_return,
     list_pending_defectives,
     list_purchases_for_return,
@@ -671,18 +673,28 @@ class SupplierReturnDialog(_ReturnDialogBase):
             kwargs = dict(purchase_lines=[(line.movement_id, spin.value()) for line, spin in self._purchase_widgets])
         else:
             kwargs = dict(defective_lines=[(d.line_id, spin.value()) for d, spin in self._defective_widgets])
-        try:
-            with session_scope() as session:
-                doc = create_supplier_return(
-                    session,
-                    supplier_id=self._supplier_id(),
-                    settlement=_checked_choice(self.settlement_group) or "",
-                    **kwargs,
-                )
-                self.return_id = doc.id
-        except StockError as error:
-            self._show_error(str(error))
-            return
+        confirmed = False
+        while True:
+            try:
+                with session_scope() as session:
+                    doc = create_supplier_return(
+                        session,
+                        supplier_id=self._supplier_id(),
+                        settlement=_checked_choice(self.settlement_group) or "",
+                        confirm_lot_shortage=confirmed,
+                        **kwargs,
+                    )
+                    self.return_id = doc.id
+            except LotShortageError as error:
+                answer = QMessageBox.question(self, "Pièce de ce fournisseur ?", str(error))
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+                confirmed = True
+                continue
+            except StockError as error:
+                self._show_error(str(error))
+                return
+            break
         self.accept()
 
 

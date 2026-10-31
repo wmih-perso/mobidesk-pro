@@ -81,6 +81,15 @@ class ReturnableLine:
     unit_price_cents: int  # prix de vente (client) ou d'achat (fournisseur)
     unit_cost_cents: int  # coût d'achat
     label: str = ""  # catégorie + modèle compatible (ex. « AFF P20 LITE »)
+    # Achat fournisseur : pièces de ce lot encore en stock selon le logiciel
+    # (None si le lot est inconnu). Indicatif : voir LotShortageError.
+    lot_remaining: int | None = None
+
+
+class LotShortageError(StockError):
+    """Le logiciel pense qu'il ne reste plus assez de pièces de ce fournisseur
+    (la vente suit l'ordre d'achat, pas la pièce réellement prise). L'utilisateur
+    peut confirmer s'il voit que la pièce est bien celle de ce fournisseur."""
 
 
 @dataclass
@@ -205,6 +214,23 @@ def list_sales_for_return(
     return result
 
 
+def _lot_remaining(session: Session, movements: list[StockMovement]) -> dict[tuple[int, int], int]:
+    """Pièces encore en stock dans le lot de chaque achat, par
+    (produit, n° d'achat). Un achat sans lot connu (anciennes données) est
+    absent du résultat : il n'est alors pas plafonné."""
+    keys = {(m.display_id, m.movement_batch_id) for m in movements if m.movement_batch_id is not None}
+    if not keys:
+        return {}
+    rows = session.execute(
+        select(StockBatch.display_id, StockBatch.movement_batch_id, StockBatch.quantity_remaining)
+        .where(
+            StockBatch.display_id.in_({k[0] for k in keys}),
+            StockBatch.movement_batch_id.in_({k[1] for k in keys}),
+        )
+    ).all()
+    return {(d, b): q for d, b, q in rows if (d, b) in keys}
+
+
 def list_purchases_for_return(
     session: Session,
     *,
@@ -239,6 +265,7 @@ def list_purchases_for_return(
 
     movements = list(session.scalars(stmt).all())
     returned = _returned_by_movement(session, [m.id for m in movements], "supplier")
+    lots = _lot_remaining(session, movements)
     search = search.strip().lower()
 
     result: list[ReturnableOperation] = []
@@ -262,6 +289,7 @@ def list_purchases_for_return(
                     quantity=bought,
                     returned=already,
                     returnable=max(0, min(bought - already, m.display.quantity)),
+                    lot_remaining=lots.get((m.display_id, m.movement_batch_id)),
                     unit_price_cents=m.unit_purchase_price_cents,
                     unit_cost_cents=m.unit_purchase_price_cents,
                 )
@@ -546,8 +574,12 @@ def create_supplier_return(
     defective_lines: list[tuple[int, int]] = (),
     settlement: str,
     note: str = "",
+    confirm_lot_shortage: bool = False,
 ) -> ReturnDoc:
     """Enregistre un renvoi au fournisseur.
+
+    Si le lot de cet achat est épuisé selon le logiciel, lève LotShortageError
+    tant que `confirm_lot_shortage` n'est pas vrai.
 
     `purchase_lines` : (id du mouvement d'achat, quantité) — le produit
     sort du stock. `defective_lines` : (id de la ligne client défectueuse,
@@ -567,6 +599,7 @@ def create_supplier_return(
         select(StockMovement).where(StockMovement.id.in_([mid for mid, _q in purchase_lines]))
     )}
     returned = _returned_by_movement(session, list(purchases), "supplier")
+    lots = _lot_remaining(session, list(purchases.values()))
     for movement_id, qty in purchase_lines:
         purchase = purchases.get(movement_id)
         if purchase is None or purchase.change_quantity <= 0 or purchase.supplier_id != supplier_id:
@@ -575,6 +608,13 @@ def create_supplier_return(
         if qty > returnable:
             raise StockError(
                 f"{purchase.display.reference} : {returnable} pièce(s) renvoyable(s) au maximum."
+            )
+        in_lot = lots.get((purchase.display_id, purchase.movement_batch_id))
+        if in_lot is not None and qty > in_lot and not confirm_lot_shortage:
+            raise LotShortageError(
+                f"{purchase.display.reference} : selon le logiciel, il reste {in_lot} pièce(s) "
+                f"de ce fournisseur en stock (les autres ont été vendues).\n"
+                f"Renvoyer {qty} pièce(s) quand même ?"
             )
 
     pending = {d.line_id: d for d in list_pending_defectives(session)}

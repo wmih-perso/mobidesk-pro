@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 
 from app.database import session_scope
 from app.models import Display
-from app.money import cents_to_da, da_to_cents
+from app.merge import list_lots
+from app.money import cents_to_da, da_to_cents, format_da
 from app.services import (
     StockError,
     create_display,
@@ -237,6 +238,15 @@ class DisplayDialog(FramelessDialog):
         )
         grid.addWidget(self.notes_input, row, 0, 1, 3)
 
+        if self.display_id is not None:
+            row += 1
+            grid.addWidget(_field_label("Lots en stock (par fournisseur)"), row, 0, 1, 3)
+            row += 1
+            self.lots_label = QLabel("")
+            self.lots_label.setWordWrap(True)
+            self.lots_label.setStyleSheet("color: #374151; font-size: 13px;")
+            grid.addWidget(self.lots_label, row, 0, 1, 3)
+
         outer.addWidget(grid_widget, stretch=1)
         return scroll
 
@@ -364,6 +374,18 @@ class DisplayDialog(FramelessDialog):
             self.sale_price_wholesale_input.setValue(cents_to_da(display.sale_price_wholesale_cents))
             self.min_stock_input.setValue(display.min_stock)
             self.notes_input.setPlainText(display.notes)
+            lots = list_lots(session, display_id)
+            aliases = [a for a in (display.aliases or "").splitlines() if a.strip()]
+
+        lines = [
+            f"•  {lot.supplier_name} — {lot.quantity_remaining} pièce(s) à {format_da(lot.unit_price_cents)}"
+            f"  ({lot.date:%d/%m/%Y})"
+            for lot in lots
+        ]
+        text = "<br>".join(lines) if lines else "Aucun lot en stock."
+        if aliases:
+            text += "<br><br><i>Anciennes références / modèles fusionnés : " + " · ".join(aliases) + "</i>"
+        self.lots_label.setText(text)
 
     # ------------------------------------------------------------------
     # Sauvegarde

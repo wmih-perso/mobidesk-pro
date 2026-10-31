@@ -274,6 +274,7 @@ class MainWindow(QMainWindow):
         user = _session.get_current_user()
         if user:
             self.sidebar.set_current_user(user.display_name, user.role)
+            self.merge_btn.setVisible(user.role == "admin")
             self._set_status_user(user.display_name, user.role)
 
         self.sidebar.select_page("stock")
@@ -553,6 +554,12 @@ class MainWindow(QMainWindow):
         self.reset_filters_btn.setVisible(False)
         search_row.addWidget(self.reset_filters_btn)
         search_row.addStretch()
+        self.merge_btn = QPushButton("🔗  Doublons")
+        self.merge_btn.setObjectName("SecondaryButton")
+        self.merge_btn.setToolTip("Fusionner un même produit créé par plusieurs fournisseurs")
+        self.merge_btn.clicked.connect(self._on_merge_duplicates)
+        self.merge_btn.setVisible(False)  # admin seulement
+        search_row.addWidget(self.merge_btn)
         self._reload_filter_choices()
 
         outer_layout.addLayout(self._build_stat_cards())
@@ -1761,6 +1768,14 @@ class MainWindow(QMainWindow):
     def _on_new_sale_dialog(self) -> None:
         dialog = SaleDialog(self._selected_display_id())
         if dialog.exec() == SaleDialog.DialogCode.Accepted:
+            self.refresh()
+
+    def _on_merge_duplicates(self) -> None:
+        from app.ui.merge_dialog import MergeDialog
+
+        dialog = MergeDialog(self)
+        dialog.exec()
+        if dialog.changed:
             self.refresh()
 
     def _on_purchase(self) -> None:

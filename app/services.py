@@ -62,7 +62,7 @@ def list_displays(
 
         displays = filter_and_rank(
             search, displays,
-            lambda d: (d.reference, d.category, d.brand, d.phone_model, d.quality),
+            lambda d: (d.reference, d.category, d.brand, d.phone_model, d.quality, d.aliases),
         )
     return displays
 

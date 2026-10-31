@@ -94,6 +94,11 @@ def _migrate_displays_schema(engine) -> None:
             existing.discard("sale_price_cents")
             existing.add("sale_price_retail_cents")
 
+        if "aliases" not in existing:
+            connection.exec_driver_sql(
+                "ALTER TABLE displays ADD COLUMN aliases TEXT NOT NULL DEFAULT ''"
+            )
+
         if "category" not in existing:
             connection.exec_driver_sql(
                 "ALTER TABLE displays ADD COLUMN category VARCHAR(50) NOT NULL DEFAULT 'Afficheur'"
