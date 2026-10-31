@@ -566,6 +566,27 @@ def create_customer_return(
 # ---------------------------------------------------------------------------
 
 
+def convert_customer_return_to_debt(session: Session, return_id: int) -> ReturnDoc:
+    """Corrige un bon de retour client réglé « en espèces » par erreur : le
+    montant est déduit de la dette du revendeur à la place. Le stock ne
+    change pas."""
+    doc = session.get(ReturnDoc, return_id)
+    if doc is None or doc.kind != "customer":
+        raise StockError("Bon de retour client introuvable.")
+    if doc.reseller_id is None:
+        raise StockError("Un client comptoir est toujours remboursé en espèces.")
+    if doc.settlement != "cash":
+        raise StockError("Ce bon n'est pas réglé en espèces.")
+    reseller = session.get(Reseller, doc.reseller_id)
+    if reseller is None:
+        raise StockError("Revendeur introuvable.")
+    reseller.balance_cents -= doc.amount_cents
+    doc.settlement = "debt"
+    doc.balance_after_cents = doc.balance_before_cents - doc.amount_cents
+    session.flush()
+    return doc
+
+
 def create_supplier_return(
     session: Session,
     *,

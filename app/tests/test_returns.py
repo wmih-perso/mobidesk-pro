@@ -281,3 +281,31 @@ def test_purchases_listed_with_invoice_number_for_all_suppliers(db_session):
     [found] = list_purchases_for_return(db_session, supplier_id=None, search="fa-0142")
     assert found.contact_id == first.id
     assert len(list_purchases_for_return(db_session, supplier_id=second.id)) == 1
+
+
+def test_convert_cash_return_to_debt(db_session):
+    from app.returns import convert_customer_return_to_debt
+    from app.services import create_display, list_movements
+
+    reseller = create_reseller(db_session, name="Rezki")
+    display = create_display(
+        db_session, reference="B", category="Batterie", brand="X", phone_model="11 PRO",
+        quality="", purchase_price_cents=100, sale_price_retail_cents=300,
+        sale_price_wholesale_cents=250, quantity=3, min_stock=1,
+    )
+    apply_stock_batch(
+        db_session, direction=-1, reason="Vente", lines=[(display.id, 1, 250)],
+        is_sale=True, sale_price_type="wholesale", reseller_id=reseller.id, versement_cents=0,
+    )
+    sale = [m for m in list_movements(db_session, display_id=display.id) if m.is_sale][0]
+    doc = create_customer_return(db_session, lines=[(sale.id, 1, "good")], settlement="cash")
+    assert reseller.balance_cents == 250
+    stock_after_return = display.quantity
+
+    convert_customer_return_to_debt(db_session, doc.id)
+
+    assert reseller.balance_cents == 0
+    assert doc.settlement == "debt" and doc.balance_after_cents == doc.balance_before_cents - 250
+    assert display.quantity == stock_after_return
+    with pytest.raises(StockError):
+        convert_customer_return_to_debt(db_session, doc.id)  # déjà en dette
