@@ -30,10 +30,10 @@ from app.money import format_da
 from app.returns import (
     SETTLEMENT_LABELS,
     contact_name,
-    convert_customer_return_to_debt,
     count_pending_defectives,
     list_return_docs,
     receive_exchange,
+    set_customer_return_settlement,
 )
 from app.services import StockError
 from app.ui.return_dialogs import CustomerReturnDialog, SettleExchangeDialog, SupplierReturnDialog
@@ -225,7 +225,8 @@ class ReturnsPage(QWidget):
                     doc.amount_cents,
                     SETTLEMENT_LABELS.get(doc.settlement, ""),
                     doc.status,
-                    doc.kind == "customer" and doc.settlement == "cash" and doc.reseller_id is not None,
+                    doc.kind == "customer" and doc.reseller_id is not None,
+                    doc.settlement,
                 )
                 for doc in self._docs
             ]
@@ -244,7 +245,7 @@ class ReturnsPage(QWidget):
         self.table.setVisible(bool(rows))
         self.empty_state.setVisible(not rows)
         self.table.setRowCount(len(rows))
-        for row, (doc_id, date, kind, contact, products, amount, settlement, status, can_fix) in enumerate(rows):
+        for row, (doc_id, date, kind, contact, products, amount, settlement, status, can_fix, settlement_code) in enumerate(rows):
             is_customer = kind == "customer"
             values = [
                 date,
@@ -264,14 +265,16 @@ class ReturnsPage(QWidget):
                 if column == 7 and status == "pending":
                     item.setForeground(Qt.GlobalColor.darkYellow)
                 self.table.setItem(row, column, item)
-            self.table.setCellWidget(row, len(COLUMNS) - 1, self._row_actions(doc_id, status, amount, can_fix))
+            self.table.setCellWidget(row, len(COLUMNS) - 1, self._row_actions(doc_id, status, amount, can_fix, settlement_code))
 
         customers = sum(1 for r in rows if r[2] == "customer")
         self.summary_label.setText(
             f"{len(rows)} bon(s) de retour  —  {customers} client(s)  ·  {len(rows) - customers} fournisseur(s)"
         )
 
-    def _row_actions(self, doc_id: int, status: str, amount: int, can_fix: bool = False) -> QWidget:
+    def _row_actions(
+        self, doc_id: int, status: str, amount: int, can_fix: bool = False, settlement: str = ""
+    ) -> QWidget:
         wrapper = QWidget()
         wrapper.setStyleSheet("background: transparent;")
         layout = QHBoxLayout(wrapper)
@@ -286,11 +289,15 @@ class ReturnsPage(QWidget):
             refunded.setToolTip("Le fournisseur rembourse au lieu d'échanger.")
             refunded.clicked.connect(lambda: self._on_settle_exchange(doc_id, amount))
             layout.addWidget(refunded)
-        if can_fix and _session.is_admin():
-            to_debt = _small_button("📒 Mettre en dette", "#eff6ff", "#1d4ed8", "#bfdbfe")
-            to_debt.setToolTip("Réglé en espèces par erreur : déduire ce montant de la dette du revendeur.")
-            to_debt.clicked.connect(lambda: self._on_convert_to_debt(doc_id, amount))
-            layout.addWidget(to_debt)
+        if settlement in ("cash", "debt") and can_fix and _session.is_admin():
+            if settlement == "cash":
+                change = _small_button("📒 Mettre en dette", "#eff6ff", "#1d4ed8", "#bfdbfe")
+                change.setToolTip("Réglé en espèces par erreur : déduire ce montant de la dette du revendeur.")
+            else:
+                change = _small_button("💵 Mettre en espèces", "#fff3e0", "#e65100", "#ffcc80")
+                change.setToolTip("Déduit de la dette par erreur : rembourser en espèces à la place.")
+            change.clicked.connect(lambda: self._on_change_settlement(doc_id, amount, settlement))
+            layout.addWidget(change)
         print_btn = _small_button("🖨", "#f1f5f9", "#374151", "#cbd5e1")
         print_btn.setToolTip("Voir / imprimer le bon de retour")
         print_btn.clicked.connect(lambda: self._show_receipt(doc_id))
@@ -345,19 +352,24 @@ class ReturnsPage(QWidget):
         self.refresh()
         self.stock_changed.emit()
 
-    def _on_convert_to_debt(self, doc_id: int, amount: int) -> None:
+    def _on_change_settlement(self, doc_id: int, amount: int, current: str) -> None:
+        to_debt = current == "cash"
         confirm = QMessageBox.question(
             self,
-            "Mettre en dette",
-            f"Le bon R{doc_id} a été réglé en espèces.\n"
-            f"Déduire {format_da(amount)} de la dette du revendeur à la place ?\n"
-            "Le stock ne change pas.",
+            "Changer le règlement",
+            (
+                f"Le bon R{doc_id} a été réglé en espèces.\n"
+                f"Déduire {format_da(amount)} de la dette du revendeur à la place ?\n"
+                if to_debt else
+                f"Le bon R{doc_id} a été déduit de la dette du revendeur.\n"
+                f"Le rembourser plutôt en espèces ? Sa dette remontera de {format_da(amount)}.\n"
+            ) + "Le stock ne change pas.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
             with session_scope() as session:
-                convert_customer_return_to_debt(session, doc_id)
+                set_customer_return_settlement(session, doc_id, "debt" if to_debt else "cash")
         except StockError as error:
             QMessageBox.warning(self, "Erreur", str(error))
             return

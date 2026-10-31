@@ -284,7 +284,7 @@ def test_purchases_listed_with_invoice_number_for_all_suppliers(db_session):
 
 
 def test_convert_cash_return_to_debt(db_session):
-    from app.returns import convert_customer_return_to_debt
+    from app.returns import set_customer_return_settlement
     from app.services import create_display, list_movements
 
     reseller = create_reseller(db_session, name="Rezki")
@@ -302,10 +302,16 @@ def test_convert_cash_return_to_debt(db_session):
     assert reseller.balance_cents == 250
     stock_after_return = display.quantity
 
-    convert_customer_return_to_debt(db_session, doc.id)
+    set_customer_return_settlement(db_session, doc.id, "debt")
 
     assert reseller.balance_cents == 0
     assert doc.settlement == "debt" and doc.balance_after_cents == doc.balance_before_cents - 250
     assert display.quantity == stock_after_return
     with pytest.raises(StockError):
-        convert_customer_return_to_debt(db_session, doc.id)  # déjà en dette
+        set_customer_return_settlement(db_session, doc.id, "debt")  # déjà en dette
+
+    # …et retour en espèces : la dette remonte, le stock ne bouge pas
+    set_customer_return_settlement(db_session, doc.id, "cash")
+    assert reseller.balance_cents == 250
+    assert doc.settlement == "cash" and doc.balance_after_cents == doc.balance_before_cents
+    assert display.quantity == stock_after_return

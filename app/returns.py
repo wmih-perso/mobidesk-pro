@@ -566,23 +566,31 @@ def create_customer_return(
 # ---------------------------------------------------------------------------
 
 
-def convert_customer_return_to_debt(session: Session, return_id: int) -> ReturnDoc:
-    """Corrige un bon de retour client réglé « en espèces » par erreur : le
-    montant est déduit de la dette du revendeur à la place. Le stock ne
-    change pas."""
+def set_customer_return_settlement(session: Session, return_id: int, settlement: str) -> ReturnDoc:
+    """Corrige le règlement d'un bon de retour client d'un revendeur :
+    « debt » (le montant est déduit de sa dette) ou « cash » (remboursé en
+    espèces, sa dette ne bouge pas). Le stock ne change pas."""
+    if settlement not in CUSTOMER_SETTLEMENTS:
+        raise StockError("Mode de remboursement invalide.")
     doc = session.get(ReturnDoc, return_id)
     if doc is None or doc.kind != "customer":
         raise StockError("Bon de retour client introuvable.")
     if doc.reseller_id is None:
         raise StockError("Un client comptoir est toujours remboursé en espèces.")
-    if doc.settlement != "cash":
-        raise StockError("Ce bon n'est pas réglé en espèces.")
+    if doc.settlement == settlement:
+        raise StockError("Ce bon a déjà ce mode de règlement.")
+    if doc.settlement not in CUSTOMER_SETTLEMENTS:
+        raise StockError("Ce bon ne peut pas être modifié.")
     reseller = session.get(Reseller, doc.reseller_id)
     if reseller is None:
         raise StockError("Revendeur introuvable.")
-    reseller.balance_cents -= doc.amount_cents
-    doc.settlement = "debt"
-    doc.balance_after_cents = doc.balance_before_cents - doc.amount_cents
+    if settlement == "debt":
+        reseller.balance_cents -= doc.amount_cents
+        doc.balance_after_cents = doc.balance_before_cents - doc.amount_cents
+    else:
+        reseller.balance_cents += doc.amount_cents
+        doc.balance_after_cents = doc.balance_before_cents
+    doc.settlement = settlement
     session.flush()
     return doc
 
