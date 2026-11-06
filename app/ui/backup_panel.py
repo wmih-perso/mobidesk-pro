@@ -287,7 +287,7 @@ def restart_application() -> None:
     import sys
     from pathlib import Path
 
-    from PySide6.QtCore import QProcess
+    from PySide6.QtCore import QProcess, QProcessEnvironment
     from PySide6.QtWidgets import QApplication
 
     from app.paths import is_frozen
@@ -301,7 +301,16 @@ def restart_application() -> None:
         args = [RESTART_FLAG]
     else:
         args = [str(Path(__file__).resolve().parents[2] / "main.py"), RESTART_FLAG]
-    QProcess.startDetached(sys.executable, args)
+    process = QProcess()
+    process.setProgram(sys.executable)
+    process.setArguments(args)
+    env = QProcessEnvironment.systemEnvironment()
+    # Exe PyInstaller « onefile » : sans cette variable, la nouvelle instance
+    # réutilise le dossier temporaire (_MEIxxxx) de l'ancienne, effacé dès
+    # que celle-ci se ferme → style.qss introuvable au démarrage.
+    env.insert("PYINSTALLER_RESET_ENVIRONMENT", "1")
+    process.setProcessEnvironment(env)
+    process.startDetached()
     QApplication.closeAllWindows()
     QApplication.quit()
 
