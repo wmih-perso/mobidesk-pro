@@ -297,6 +297,30 @@ class Supplier(Base):
         return f"<Supplier {self.name}>"
 
 
+class SupplierPayment(Base):
+    """Versement à un fournisseur (réduit ce qu'on lui doit), ou ajustement
+    manuel du solde par l'administrateur (kind = "adjust")."""
+
+    __tablename__ = "supplier_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    supplier: Mapped["Supplier"] = relationship()
+
+    kind: Mapped[str] = mapped_column(String(20), default="payment")
+    amount_cents: Mapped[int]
+    balance_before_cents: Mapped[int] = mapped_column(default=0)
+    balance_after_cents: Mapped[int] = mapped_column(default=0)
+    note: Mapped[str] = mapped_column(String(255), default="")
+    cashier_name: Mapped[str] = mapped_column(String(100), default="")
+
+    created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
+
+    def __repr__(self) -> str:
+        return f"<SupplierPayment supplier_id={self.supplier_id} amount={self.amount_cents}>"
+
+
 class User(Base):
     """Compte utilisateur — caissier ou administrateur."""
 

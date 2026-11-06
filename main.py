@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
+from app.backup import RESTART_FLAG, apply_pending_restore
 from app.database import init_engine
 from app.single_instance import notify_running_instance, start_listening
 from app.ui.login_dialog import LoginDialog
@@ -31,11 +33,29 @@ def main() -> int:
     app = QApplication(sys.argv)
 
     # Une seule instance : si l'app est déjà ouverte, on la remet au premier plan.
+    # Après « Récupérer depuis le cloud », l'ancienne instance est en train
+    # de se fermer : on lui laisse quelques secondes.
+    if RESTART_FLAG in sys.argv:
+        for _ in range(20):
+            if not notify_running_instance():
+                break
+            time.sleep(0.5)
     if notify_running_instance():
         return 0
     instance_server = start_listening(app)  # noqa: F841 — à garder en vie
 
+    restored_from = None
+    try:
+        restored_from = apply_pending_restore()
+    except Exception as exc:  # la base actuelle reste en place
+        QMessageBox.critical(None, "Récupération", f"La base récupérée n'a pas pu être installée :\n{exc}")
     init_engine()
+    if restored_from is not None:
+        QMessageBox.information(
+            None, "Récupération",
+            "La base récupérée depuis le cloud est installée.\n\n"
+            f"L'ancienne base a été gardée ici :\n{restored_from}",
+        )
     if APP_ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 

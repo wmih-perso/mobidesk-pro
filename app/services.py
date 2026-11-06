@@ -12,7 +12,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Category, Display, Expense, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, User
+from app.models import Category, Display, Expense, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, SupplierPayment, User
 
 SalePriceType = Literal["retail", "wholesale"]
 
@@ -1183,6 +1183,63 @@ def update_supplier(
     _update_contact(supplier, name=name, phone=phone, address=address, notes=notes)
     session.flush()
     return supplier
+
+
+def record_supplier_payment(
+    session: Session, supplier_id: int, amount_cents: int, note: str = ""
+) -> SupplierPayment:
+    """Versement à un fournisseur : réduit ce qu'on lui doit."""
+    if amount_cents <= 0:
+        raise StockError("Le montant du versement doit être positif.")
+    supplier = get_supplier(session, supplier_id)
+    return _add_supplier_payment(
+        session, supplier, "payment", amount_cents, supplier.balance_cents - amount_cents, note
+    )
+
+
+def set_supplier_balance(
+    session: Session, supplier_id: int, balance_cents: int, note: str = ""
+) -> SupplierPayment:
+    """Ajustement manuel (admin) : fixe directement ce qu'on doit au
+    fournisseur. L'écart est gardé dans l'historique des versements."""
+    supplier = get_supplier(session, supplier_id)
+    if balance_cents == supplier.balance_cents:
+        raise StockError("Le solde est déjà à ce montant.")
+    return _add_supplier_payment(
+        session, supplier, "adjust", supplier.balance_cents - balance_cents, balance_cents,
+        note or "Ajustement du solde",
+    )
+
+
+def _add_supplier_payment(
+    session: Session, supplier: Supplier, kind: str, amount_cents: int,
+    balance_after: int, note: str,
+) -> SupplierPayment:
+    from app import session as _session
+
+    payment = SupplierPayment(
+        supplier_id=supplier.id,
+        kind=kind,
+        amount_cents=amount_cents,
+        balance_before_cents=supplier.balance_cents,
+        balance_after_cents=balance_after,
+        note=note.strip(),
+        cashier_name=_session.get_current_cashier_name(),
+    )
+    supplier.balance_cents = balance_after
+    session.add(payment)
+    session.flush()
+    return payment
+
+
+def list_supplier_payments(session: Session, supplier_id: int) -> list[SupplierPayment]:
+    """Historique des versements à un fournisseur, du plus récent au plus ancien."""
+    stmt = (
+        select(SupplierPayment)
+        .where(SupplierPayment.supplier_id == supplier_id)
+        .order_by(SupplierPayment.created_at.desc())
+    )
+    return list(session.scalars(stmt).all())
 
 
 def deactivate_supplier(session: Session, supplier_id: int) -> None:

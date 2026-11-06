@@ -365,12 +365,78 @@ class SupplierPurchaseDialog(_BaseStockBatchDialog):
         self.invoice_input.setMaxLength(50)
         form.addRow(field_label("N° de facture", icon="list"), self.invoice_input)
 
+    def _build_ui(self) -> None:
+        super()._build_ui()
+        # Règlement de la facture : la partie non payée s'ajoute à la dette
+        # du fournisseur (Contacts → Fournisseurs).
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(QLabel("Règlement :"))
+        self.payment_input = QComboBox()
+        self.payment_input.addItem("Payé en totalité", "full")
+        self.payment_input.addItem("Payé en partie", "partial")
+        self.payment_input.addItem("Pas payé (dette)", "none")
+        self.payment_input.currentIndexChanged.connect(self._update_total)
+        row.addWidget(self.payment_input)
+        self.paid_spin = ModernDoubleSpinBox()
+        self.paid_spin.setRange(0, 999_999_999)
+        self.paid_spin.setDecimals(0)
+        self.paid_spin.setSuffix(" DA")
+        self.paid_spin.setFixedWidth(150)
+        self.paid_spin.valueChanged.connect(self._update_debt_label)
+        row.addWidget(self.paid_spin)
+        self.debt_label = QLabel("")
+        self.debt_label.setStyleSheet("font-weight: 700; color: #dc2626;")
+        row.addWidget(self.debt_label)
+        self._layout.insertLayout(self._layout.indexOf(self.error_label), row)
+        self.supplier_input.currentIndexChanged.connect(self._update_total)
+        self._update_total()
+
+    def _total_cents(self) -> int:
+        return sum(
+            da_to_cents(price.value()) * spin.value()
+            for _display_id, spin, price in self._line_rows
+            if price is not None
+        )
+
+    def _update_total(self) -> None:
+        super()._update_total()
+        if not hasattr(self, "paid_spin"):
+            return  # lignes préchargées avant la construction du règlement
+        has_supplier = self.supplier_input.currentData() is not None
+        self.payment_input.setEnabled(has_supplier)
+        mode = self.payment_input.currentData()
+        total_da = cents_to_da(self._total_cents())
+        self.paid_spin.setVisible(has_supplier and mode == "partial")
+        self.paid_spin.setMaximum(max(total_da, 0))
+        if mode == "full":
+            self.paid_spin.setValue(total_da)
+        elif mode == "none":
+            self.paid_spin.setValue(0)
+        self._update_debt_label()
+
+    def _update_debt_label(self) -> None:
+        if not hasattr(self, "debt_label"):
+            return
+        unpaid = self._total_cents() - da_to_cents(self.paid_spin.value())
+        has_supplier = self.supplier_input.currentData() is not None
+        self.debt_label.setText(
+            f"+ {format_da(unpaid)} de dette" if has_supplier and unpaid > 0 else ""
+        )
+
     def _batch_kwargs(self) -> dict:
-        return dict(
+        supplier_id = self.supplier_input.currentData()
+        kwargs = dict(
             reason="Achat fournisseur",
-            supplier_id=self.supplier_input.currentData(),
+            supplier_id=supplier_id,
             invoice_number=self.invoice_input.text().strip(),
         )
+        if supplier_id is not None:
+            paid = da_to_cents(self.paid_spin.value())
+            if self.payment_input.currentData() == "full":
+                paid = self._total_cents()
+            kwargs["versement_cents"] = paid
+        return kwargs
 
 
 class WholesaleSaleDialog(_BaseStockBatchDialog):

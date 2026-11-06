@@ -24,8 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import session as _session
 from app.database import session_scope
-from app.money import format_balance, format_balance_ticket, format_da
+from app.money import format_balance, format_balance_ticket, format_da, format_supplier_balance
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ALIGN_RIGHT, right_align_headers
 from app.services import (
@@ -37,13 +38,21 @@ from app.services import (
     list_movements,
     list_resellers,
     list_reseller_payments,
+    list_supplier_payments,
     list_suppliers,
     record_reseller_payment,
+    record_supplier_payment,
+    set_supplier_balance,
     update_reseller,
     update_supplier,
 )
 
 ContactMode = Literal["resellers", "suppliers"]
+
+
+def _format_for(mode: ContactMode):
+    """Revendeur : « - 500 DA » = il nous doit. Fournisseur : « 500 DA à payer »."""
+    return format_balance if mode == "resellers" else format_supplier_balance
 
 
 def _balance_color(cents: int) -> str:
@@ -106,14 +115,10 @@ class ContactsPage(QWidget):
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(0)
 
-        if self._mode == "resellers":
-            col_headers = ["Nom", "Téléphone", "Adresse", "Solde", ""]
-            ncols = 5
-        else:
-            col_headers = ["Nom", "Téléphone", "Adresse", ""]
-            ncols = 4
+        balance_header = "Solde" if self._mode == "resellers" else "Dette"
+        col_headers = ["Nom", "Téléphone", "Adresse", balance_header, ""]
 
-        self.contacts_table = QTableWidget(0, ncols)
+        self.contacts_table = QTableWidget(0, len(col_headers))
         self.contacts_table.setHorizontalHeaderLabels(col_headers)
         self.contacts_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.contacts_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -129,13 +134,11 @@ class ContactsPage(QWidget):
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        if self._mode == "resellers":
-            h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-            h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-            self.contacts_table.setColumnWidth(4, 140)
-        else:
-            h.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-            self.contacts_table.setColumnWidth(3, 80)
+        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.contacts_table.setColumnWidth(
+            4, 180 if self._mode == "suppliers" and _session.is_admin() else 140
+        )
 
         self.contacts_table.itemSelectionChanged.connect(self._on_selection_changed)
         list_layout.addWidget(self.contacts_table)
@@ -177,25 +180,22 @@ class ContactsPage(QWidget):
             self.contacts_table.setItem(i, 1, QTableWidgetItem(c.phone or ""))
             self.contacts_table.setItem(i, 2, QTableWidgetItem(c.address or ""))
 
-            if self._mode == "resellers":
-                balance = c.balance_cents
-                bal_item = QTableWidgetItem(format_balance(balance))
-                bal_item.setForeground(Qt.GlobalColor.black)
-                from PySide6.QtGui import QColor
-                bal_item.setForeground(QColor(_balance_color(balance)))
-                bal_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.contacts_table.setItem(i, 3, bal_item)
+            from PySide6.QtGui import QColor
+            balance = c.balance_cents
+            bal_item = QTableWidgetItem(_format_for(self._mode)(balance))
+            bal_item.setForeground(QColor(_balance_color(balance)))
+            bal_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.contacts_table.setItem(i, 3, bal_item)
 
-                actions = _reseller_action_cell(c.id, c.balance_cents,
-                                                edit_cb=self._on_edit,
-                                                delete_cb=self._on_delete,
-                                                versement_cb=self._on_versement)
-                self.contacts_table.setCellWidget(i, 4, actions)
-            else:
-                actions = _supplier_action_cell(c.id,
-                                                edit_cb=self._on_edit,
-                                                delete_cb=self._on_delete)
-                self.contacts_table.setCellWidget(i, 3, actions)
+            adjust_cb = (
+                self._on_adjust if self._mode == "suppliers" and _session.is_admin() else None
+            )
+            actions = _contact_action_cell(c.id, c.balance_cents,
+                                           edit_cb=self._on_edit,
+                                           delete_cb=self._on_delete,
+                                           versement_cb=self._on_versement,
+                                           adjust_cb=adjust_cb)
+            self.contacts_table.setCellWidget(i, 4, actions)
 
         if self._selected_id is not None:
             self._load_detail(self._selected_id)
@@ -222,8 +222,9 @@ class ContactsPage(QWidget):
                 balance = reseller.balance_cents if reseller else 0
             else:
                 movements = list_movements(session, supplier_id=contact_id)
-                payments = []
-                balance = 0
+                payments = list_supplier_payments(session, contact_id)
+                supplier = next((c for c in self._contacts if c.id == contact_id), None)
+                balance = supplier.balance_cents if supplier else 0
 
             mvt_rows = []
             for m in movements:
@@ -242,13 +243,15 @@ class ContactsPage(QWidget):
                     m.is_sale,
                 ))
 
+            fmt = _format_for(self._mode)
             pay_rows = []
             for p in payments:
+                is_adjust = getattr(p, "kind", "payment") == "adjust"
                 pay_rows.append((
                     p.created_at.strftime("%d/%m/%Y %H:%M"),
-                    format_da(p.amount_cents),
-                    format_balance(p.balance_before_cents),
-                    format_balance(p.balance_after_cents),
+                    "Ajustement" if is_adjust else format_da(p.amount_cents),
+                    fmt(p.balance_before_cents),
+                    fmt(p.balance_after_cents),
                     p.note or "—",
                     p.cashier_name or "—",
                 ))
@@ -315,15 +318,33 @@ class ContactsPage(QWidget):
             self._detail_panel.clear()
         self.refresh()
 
-    def _on_versement(self, reseller_id: int) -> None:
-        contact = next((c for c in self._contacts if c.id == reseller_id), None)
+    def _on_versement(self, contact_id: int) -> None:
+        contact = next((c for c in self._contacts if c.id == contact_id), None)
         if contact is None:
             return
-        dlg = _VersementDialog(contact.name, contact.balance_cents, parent=self)
+        dlg = _VersementDialog(contact.name, contact.balance_cents, mode=self._mode, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 with session_scope() as session:
-                    record_reseller_payment(session, reseller_id, dlg.amount_cents, dlg.note)
+                    if self._mode == "resellers":
+                        record_reseller_payment(session, contact_id, dlg.amount_cents, dlg.note)
+                    else:
+                        record_supplier_payment(session, contact_id, dlg.amount_cents, dlg.note)
+                self.refresh()
+            except StockError as e:
+                QMessageBox.warning(self, "Erreur", str(e))
+
+    def _on_adjust(self, supplier_id: int) -> None:
+        contact = next((c for c in self._contacts if c.id == supplier_id), None)
+        if contact is None:
+            return
+        dlg = _VersementDialog(
+            contact.name, contact.balance_cents, mode=self._mode, adjust=True, parent=self
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            try:
+                with session_scope() as session:
+                    set_supplier_balance(session, supplier_id, dlg.amount_cents, dlg.note)
                 self.refresh()
             except StockError as e:
                 QMessageBox.warning(self, "Erreur", str(e))
@@ -333,7 +354,9 @@ class ContactsPage(QWidget):
 # Helpers cellules d'actions
 # ---------------------------------------------------------------------------
 
-def _reseller_action_cell(contact_id, balance_cents, *, edit_cb, delete_cb, versement_cb) -> QWidget:
+def _contact_action_cell(
+    contact_id, balance_cents, *, edit_cb, delete_cb, versement_cb, adjust_cb=None
+) -> QWidget:
     w = QWidget()
     w.setStyleSheet("background: transparent;")
     layout = QHBoxLayout(w)
@@ -352,29 +375,14 @@ def _reseller_action_cell(contact_id, balance_cents, *, edit_cb, delete_cb, vers
     pay_btn.clicked.connect(lambda _c, cid=contact_id: versement_cb(cid))
     layout.addWidget(pay_btn)
 
-    edit_btn = QPushButton("✏")
-    edit_btn.setObjectName("IconButton")
-    edit_btn.setFixedSize(28, 28)
-    edit_btn.setStyleSheet("padding:0; font-size:13px;")
-    edit_btn.clicked.connect(lambda _c, cid=contact_id: edit_cb(cid))
-    layout.addWidget(edit_btn)
-
-    del_btn = QPushButton("×")
-    del_btn.setObjectName("IconButton")
-    del_btn.setFixedSize(28, 28)
-    del_btn.setStyleSheet("padding:0; font-size:15px; color:#dc2626; font-weight:700;")
-    del_btn.clicked.connect(lambda _c, cid=contact_id: delete_cb(cid))
-    layout.addWidget(del_btn)
-
-    return w
-
-
-def _supplier_action_cell(contact_id, *, edit_cb, delete_cb) -> QWidget:
-    w = QWidget()
-    w.setStyleSheet("background: transparent;")
-    layout = QHBoxLayout(w)
-    layout.setContentsMargins(4, 2, 4, 2)
-    layout.setSpacing(4)
+    if adjust_cb is not None:
+        adjust_btn = QPushButton("⚖")
+        adjust_btn.setObjectName("IconButton")
+        adjust_btn.setFixedSize(28, 28)
+        adjust_btn.setToolTip("Ajuster le solde (corriger ce qu'on doit au fournisseur)")
+        adjust_btn.setStyleSheet("padding:0; font-size:13px;")
+        adjust_btn.clicked.connect(lambda _c, cid=contact_id: adjust_cb(cid))
+        layout.addWidget(adjust_btn)
 
     edit_btn = QPushButton("✏")
     edit_btn.setObjectName("IconButton")
@@ -420,13 +428,12 @@ class _DetailPanel(QWidget):
         self._header.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
         header_row.addWidget(self._header)
         header_row.addStretch()
-        if mode == "resellers":
-            self._balance_badge = QLabel("")
-            self._balance_badge.setStyleSheet(
-                "font-size: 13px; font-weight: 700; padding: 3px 10px; "
-                "border-radius: 10px; background: #f1f5f9; color: #374151;"
-            )
-            header_row.addWidget(self._balance_badge)
+        self._balance_badge = QLabel("")
+        self._balance_badge.setStyleSheet(
+            "font-size: 13px; font-weight: 700; padding: 3px 10px; "
+            "border-radius: 10px; background: #f1f5f9; color: #374151;"
+        )
+        header_row.addWidget(self._balance_badge)
         card_layout.addLayout(header_row)
 
         sep = QFrame()
@@ -435,23 +442,19 @@ class _DetailPanel(QWidget):
         card_layout.addWidget(sep)
 
         # Tabs
-        if mode == "resellers":
-            self._tabs = QTabWidget()
-            self._tabs.setStyleSheet(
-                "QTabWidget::pane { border: none; }"
-                "QTabBar::tab { padding: 6px 16px; font-size: 12px; font-weight: 600; }"
-                # Fond bleu de l'onglet actif (style commun) : texte en blanc,
-                # sinon le texte bleu disparaît sur le fond bleu.
-                "QTabBar::tab:selected { background-color: #2563eb; color: #ffffff; border-color: #2563eb; }"
-            )
-            self._mvt_tab = self._build_movements_table()
-            self._pay_tab = self._build_payments_table()
-            self._tabs.addTab(self._mvt_tab, "Mouvements stock")
-            self._tabs.addTab(self._pay_tab, "Versements")
-            card_layout.addWidget(self._tabs, stretch=1)
-        else:
-            self._mvt_tab = self._build_movements_table()
-            card_layout.addWidget(self._mvt_tab, stretch=1)
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            "QTabWidget::pane { border: none; }"
+            "QTabBar::tab { padding: 6px 16px; font-size: 12px; font-weight: 600; }"
+            # Fond bleu de l'onglet actif (style commun) : texte en blanc,
+            # sinon le texte bleu disparaît sur le fond bleu.
+            "QTabBar::tab:selected { background-color: #2563eb; color: #ffffff; border-color: #2563eb; }"
+        )
+        self._mvt_tab = self._build_movements_table()
+        self._pay_tab = self._build_payments_table()
+        self._tabs.addTab(self._mvt_tab, "Mouvements stock")
+        self._tabs.addTab(self._pay_tab, "Versements")
+        card_layout.addWidget(self._tabs, stretch=1)
 
         layout.addWidget(card)
 
@@ -535,13 +538,13 @@ class _DetailPanel(QWidget):
         self._global_refresh_cb = global_refresh_cb
         self._header.setText(f"Historique — {contact_name}  ({len(mvt_rows)} mouvement(s))")
 
-        if self._mode == "resellers" and hasattr(self, "_balance_badge"):
-            color = _balance_color(balance)
-            self._balance_badge.setText(f"Solde : {format_balance(balance)}")
-            self._balance_badge.setStyleSheet(
-                f"font-size: 13px; font-weight: 700; padding: 3px 10px; "
-                f"border-radius: 10px; background: #f1f5f9; color: {color};"
-            )
+        color = _balance_color(balance)
+        label = "Solde" if self._mode == "resellers" else "Dette"
+        self._balance_badge.setText(f"{label} : {_format_for(self._mode)(balance)}")
+        self._balance_badge.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; padding: 3px 10px; "
+            f"border-radius: 10px; background: #f1f5f9; color: {color};"
+        )
 
         # Mouvements
         self._table.setRowCount(len(mvt_rows))
@@ -579,29 +582,28 @@ class _DetailPanel(QWidget):
                 )
                 self._table.setCellWidget(i, 7, print_btn)
 
-        # Versements (mode revendeurs uniquement)
-        if self._mode == "resellers":
-            self._pay_table.setRowCount(len(pay_rows))
-            has_pay = bool(pay_rows)
-            self._pay_table.setVisible(has_pay)
-            self._pay_empty.setVisible(not has_pay)
-            for i, (date, amount, bal_before, bal_after, note, cashier) in enumerate(pay_rows):
-                self._pay_table.setItem(i, 0, QTableWidgetItem(date))
-                amt_item = QTableWidgetItem(amount)
-                amt_item.setForeground(Qt.GlobalColor.darkGreen)
-                amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self._pay_table.setItem(i, 1, amt_item)
-                for column, balance in ((2, bal_before), (3, bal_after)):
-                    balance_item = QTableWidgetItem(balance)
-                    balance_item.setTextAlignment(ALIGN_RIGHT)
-                    self._pay_table.setItem(i, column, balance_item)
-                self._pay_table.setItem(i, 4, QTableWidgetItem(note))
-                self._pay_table.setItem(i, 5, QTableWidgetItem(cashier))
+        # Versements
+        self._pay_table.setRowCount(len(pay_rows))
+        has_pay = bool(pay_rows)
+        self._pay_table.setVisible(has_pay)
+        self._pay_empty.setVisible(not has_pay)
+        for i, (date, amount, bal_before, bal_after, note, cashier) in enumerate(pay_rows):
+            self._pay_table.setItem(i, 0, QTableWidgetItem(date))
+            amt_item = QTableWidgetItem(amount)
+            amt_item.setForeground(Qt.GlobalColor.darkGreen)
+            amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._pay_table.setItem(i, 1, amt_item)
+            for column, balance in ((2, bal_before), (3, bal_after)):
+                balance_item = QTableWidgetItem(balance)
+                balance_item.setTextAlignment(ALIGN_RIGHT)
+                self._pay_table.setItem(i, column, balance_item)
+            self._pay_table.setItem(i, 4, QTableWidgetItem(note))
+            self._pay_table.setItem(i, 5, QTableWidgetItem(cashier))
 
-            if pay_rows:
-                self._tabs.setTabText(1, f"Versements ({len(pay_rows)})")
-            else:
-                self._tabs.setTabText(1, "Versements")
+        if pay_rows:
+            self._tabs.setTabText(1, f"Versements ({len(pay_rows)})")
+        else:
+            self._tabs.setTabText(1, "Versements")
 
     def _on_print(self, batch_id, movement_id) -> None:
         from app.ui.ticket_dialog import TicketPreviewDialog
@@ -620,15 +622,13 @@ class _DetailPanel(QWidget):
     def clear(self) -> None:
         self._refresh_cb = None
         self._header.setText("Sélectionnez un contact pour voir ses mouvements")
-        if self._mode == "resellers" and hasattr(self, "_balance_badge"):
-            self._balance_badge.setText("")
+        self._balance_badge.setText("")
         self._table.setRowCount(0)
         self._table.setVisible(True)
         self._mvt_empty.setVisible(False)
-        if self._mode == "resellers":
-            self._pay_table.setRowCount(0)
-            self._pay_table.setVisible(True)
-            self._pay_empty.setVisible(False)
+        self._pay_table.setRowCount(0)
+        self._pay_table.setVisible(True)
+        self._pay_empty.setVisible(False)
 
 
 # ---------------------------------------------------------------------------
@@ -636,12 +636,17 @@ class _DetailPanel(QWidget):
 # ---------------------------------------------------------------------------
 
 class _VersementDialog(FramelessDialog):
-    def __init__(self, reseller_name: str, balance_cents: int, parent=None) -> None:
+    """Versement d'un revendeur / à un fournisseur. Avec `adjust=True`
+    (fournisseur, admin) : saisie directe du nouveau solde dû."""
+
+    def __init__(self, reseller_name: str, balance_cents: int, mode: ContactMode = "resellers",
+                 adjust: bool = False, parent=None) -> None:
         super().__init__(parent)
         self.setModal(True)
         self.setMinimumWidth(380)
         self.amount_cents = 0
         self.note = ""
+        self._adjust = adjust
 
         from app.money import cents_to_da, da_to_cents
         from app.ui.widgets import ModernDoubleSpinBox
@@ -650,7 +655,7 @@ class _VersementDialog(FramelessDialog):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._make_header(
-            f"💰  Versement — {reseller_name}",
+            f"{'⚖  Ajuster le solde' if adjust else '💰  Versement'} — {reseller_name}",
             gradient="qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1a1a2e,stop:1 #1e3a5f)",
         ))
 
@@ -663,7 +668,10 @@ class _VersementDialog(FramelessDialog):
 
         # Solde actuel
         color = _balance_color(balance_cents)
-        solde_lbl = QLabel(f"Solde actuel : <b style='color:{color};'>{format_balance(balance_cents)}</b>")
+        current = "Dette actuelle" if mode == "suppliers" else "Solde actuel"
+        solde_lbl = QLabel(
+            f"{current} : <b style='color:{color};'>{_format_for(mode)(balance_cents)}</b>"
+        )
         solde_lbl.setStyleSheet("font-size: 13px; color: #374151;")
         layout.addWidget(solde_lbl)
 
@@ -672,16 +680,28 @@ class _VersementDialog(FramelessDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self._amount_spin = ModernDoubleSpinBox()
-        self._amount_spin.setRange(1, 999_999_999)
         self._amount_spin.setDecimals(0)
         self._amount_spin.setSuffix(" DA")
         self._amount_spin.setFixedHeight(36)
-        if balance_cents > 0:
+        if adjust:
+            # Négatif = avoir (le fournisseur nous doit).
+            self._amount_spin.setRange(-999_999_999, 999_999_999)
             self._amount_spin.setValue(cents_to_da(balance_cents))
-        form.addRow("Montant *", self._amount_spin)
+            form.addRow("Montant dû *", self._amount_spin)
+            hint = QLabel("Ce que vous devez au fournisseur (négatif = il vous doit).")
+            hint.setStyleSheet("color: #64748b; font-size: 11px;")
+            form.addRow("", hint)
+        else:
+            self._amount_spin.setRange(1, 999_999_999)
+            if balance_cents > 0:
+                self._amount_spin.setValue(cents_to_da(balance_cents))
+            form.addRow("Montant *", self._amount_spin)
 
         self._note_input = QLineEdit()
-        self._note_input.setPlaceholderText("Ex : paiement espèces, chèque n°... (optionnel)")
+        self._note_input.setPlaceholderText(
+            "Raison de la correction (optionnel)" if adjust
+            else "Ex : paiement espèces, chèque n°... (optionnel)"
+        )
         form.addRow("Note", self._note_input)
 
         layout.addLayout(form)
@@ -720,7 +740,7 @@ class _VersementDialog(FramelessDialog):
 
     def _accept(self) -> None:
         amount = self._da_to_cents(self._amount_spin.value())
-        if amount <= 0:
+        if amount <= 0 and not self._adjust:
             self._error.setText("Le montant doit être supérieur à 0.")
             return
         self.amount_cents = amount

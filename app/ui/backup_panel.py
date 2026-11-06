@@ -29,12 +29,16 @@ from PySide6.QtWidgets import (
 
 from app import session as _session
 from app.backup import (
+    RESTART_FLAG,
+    download_for_restore,
     is_configured,
+    list_cloud_backups,
     load_backup_config,
     save_backup_config,
     test_connection,
     upload_backup,
 )
+from app.paths import get_database_path
 from app.ui.frameless_dialog import FramelessDialog
 
 # Aides à la saisie selon le fournisseur
@@ -175,6 +179,13 @@ class BackupPanel(QWidget):
         self._backup_now_btn.setObjectName("SecondaryButton")
         self._backup_now_btn.clicked.connect(self._on_backup_now)
         buttons_row.addWidget(self._backup_now_btn)
+
+        self._restore_btn = QPushButton("☁  Récupérer depuis le cloud")
+        self._restore_btn.setObjectName("SecondaryButton")
+        self._restore_btn.setToolTip("Remplacer la base de ce PC par une sauvegarde du cloud")
+        self._restore_btn.clicked.connect(self._on_restore)
+        self._restore_btn.setVisible(_session.is_admin())
+        buttons_row.addWidget(self._restore_btn)
         buttons_row.addStretch()
         layout.addLayout(buttons_row)
 
@@ -207,6 +218,7 @@ class BackupPanel(QWidget):
             )
         self._test_btn.setEnabled(configured)
         self._backup_now_btn.setEnabled(configured)
+        self._restore_btn.setEnabled(configured)
         self._refresh_last_backup()
 
     def _refresh_last_backup(self) -> None:
@@ -244,6 +256,187 @@ class BackupPanel(QWidget):
             self._refresh_last_backup()
 
         run_backup(_done, config=load_backup_config())
+
+    def _on_restore(self) -> None:
+        RestoreDialog(parent=self).exec()
+
+
+# ---------------------------------------------------------------------------
+# Fenêtre « Récupérer depuis le cloud »
+# ---------------------------------------------------------------------------
+
+
+def _run_in_thread(on_done, work) -> None:
+    """`work()` dans un thread ; `on_done(succès, résultat ou message)` sur
+    le thread de l'interface."""
+    results: dict = {}
+    bridge = _bridge(lambda ok, msg: on_done(ok, results.get("value") if ok else msg))
+
+    def _target() -> None:
+        try:
+            results["value"] = work()
+            bridge.finished.emit(True, "")
+        except Exception as exc:
+            bridge.finished.emit(False, str(exc))
+
+    threading.Thread(target=_target, daemon=True).start()
+
+
+def restart_application() -> None:
+    """Relance MobiDesk (la base récupérée s'installe au démarrage)."""
+    import sys
+    from pathlib import Path
+
+    from PySide6.QtCore import QProcess
+    from PySide6.QtWidgets import QApplication
+
+    from app.paths import is_frozen
+
+    for widget in QApplication.topLevelWidgets():
+        # Pas de sauvegarde « à la fermeture » : elle enverrait l'ancienne
+        # base, qui deviendrait la plus récente du cloud.
+        if hasattr(widget, "_close_backup_done"):
+            widget._close_backup_done = True
+    if is_frozen():
+        args = [RESTART_FLAG]
+    else:
+        args = [str(Path(__file__).resolve().parents[2] / "main.py"), RESTART_FLAG]
+    QProcess.startDetached(sys.executable, args)
+    QApplication.closeAllWindows()
+    QApplication.quit()
+
+
+class RestoreDialog(FramelessDialog):
+    """Liste des sauvegardes du cloud (la plus récemment déposée en haut)
+    et remplacement de la base de ce PC par celle choisie."""
+
+    def __init__(self, parent=None) -> None:
+        from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget
+
+        super().__init__(parent)
+        self.setMinimumWidth(680)
+        self.setModal(True)
+        self._backups: list = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header("☁  Récupérer depuis le cloud"))
+
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(12)
+
+        warning = QLabel(
+            "⚠  La base choisie <b>remplace</b> celle de ce PC. Les ventes, retours et "
+            "achats saisis ici après cette sauvegarde seront perdus.<br>"
+            "Une copie de la base actuelle est gardée avant le remplacement."
+        )
+        warning.setWordWrap(True)
+        warning.setStyleSheet(
+            "background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px;"
+            " padding: 10px; color: #9a3412;"
+        )
+        layout.addWidget(warning)
+
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Déposée le", "Fichier", "Taille"])
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setMinimumHeight(280)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.doubleClicked.connect(self._on_restore)
+        layout.addWidget(self._table)
+
+        self._status = QLabel("Chargement de la liste…")
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet("color: #64748b;")
+        layout.addWidget(self._status)
+        root.addWidget(body)
+
+        footer = QFrame()
+        footer.setStyleSheet("QFrame { background: #f0f9ff; border-top: 1px solid #bae6fd; }")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 12, 20, 12)
+        cancel_btn = QPushButton("✕  Annuler")
+        cancel_btn.setObjectName("SecondaryButton")
+        cancel_btn.clicked.connect(self.reject)
+        footer_layout.addWidget(cancel_btn)
+        footer_layout.addStretch()
+        self._restore_btn = QPushButton("☁  Récupérer")
+        self._restore_btn.setEnabled(False)
+        self._restore_btn.clicked.connect(self._on_restore)
+        footer_layout.addWidget(self._restore_btn)
+        root.addWidget(footer)
+
+        _run_in_thread(self._on_listed, lambda: list_cloud_backups(load_backup_config()))
+
+    def _on_listed(self, success: bool, result) -> None:
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        if not success:
+            self._status.setText(f"Impossible de lire le cloud : {result}")
+            self._status.setStyleSheet("color: #ef4444;")
+            return
+        self._backups = result
+        self._table.setRowCount(len(result))
+        for row, backup in enumerate(result):
+            self._table.setItem(row, 0, QTableWidgetItem(backup.uploaded_at.strftime("%d/%m/%Y  %H:%M")))
+            self._table.setItem(row, 1, QTableWidgetItem(backup.name))
+            self._table.setItem(row, 2, QTableWidgetItem(f"{backup.size / 1_048_576:.1f} Mo"))
+        if result:
+            self._table.selectRow(0)
+            self._restore_btn.setEnabled(True)
+            self._status.setText(f"{len(result)} sauvegarde(s). La plus récente est sélectionnée.")
+        else:
+            self._status.setText("Aucune sauvegarde (.db) dans le dossier du cloud.")
+
+    def _selected(self):
+        rows = self._table.selectionModel().selectedRows()
+        return self._backups[rows[0].row()] if rows else None
+
+    def _on_restore(self) -> None:
+        backup = self._selected()
+        if backup is None:
+            return
+        modified = datetime.datetime.fromtimestamp(get_database_path().stat().st_mtime)
+        extra = ""
+        if modified > backup.uploaded_at:
+            extra = (
+                f"\n\n⚠  La base de ce PC a été modifiée le {modified:%d/%m/%Y à %H:%M}, "
+                "APRÈS cette sauvegarde : ces changements seront perdus."
+            )
+        confirm = QMessageBox.question(
+            self, "Récupérer depuis le cloud",
+            f"Remplacer la base de ce PC par :\n{backup.name}\n"
+            f"(déposée le {backup.uploaded_at:%d/%m/%Y à %H:%M}) ?{extra}\n\n"
+            "MobiDesk redémarrera tout seul.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._restore_btn.setEnabled(False)
+        self._table.setEnabled(False)
+        self._status.setText("Téléchargement et vérification…")
+        self._status.setStyleSheet("color: #64748b;")
+        config = load_backup_config()
+        _run_in_thread(self._on_downloaded, lambda: download_for_restore(config, backup.key))
+
+    def _on_downloaded(self, success: bool, result) -> None:
+        if not success:
+            self._restore_btn.setEnabled(True)
+            self._table.setEnabled(True)
+            self._status.setText(f"Échec, la base actuelle n'a pas été touchée : {result}")
+            self._status.setStyleSheet("color: #ef4444;")
+            return
+        self.accept()
+        restart_application()
 
 
 # ---------------------------------------------------------------------------

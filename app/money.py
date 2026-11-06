@@ -28,6 +28,16 @@ def format_balance(cents: int) -> str:
     return f"{sign} {num} DA"
 
 
+def format_supplier_balance(cents: int) -> str:
+    """Solde fournisseur : > 0 = on lui doit, < 0 = il nous doit (avoir)."""
+    num = f"{round(abs(cents) / 100):,}".replace(",", " ")
+    if cents > 0:
+        return f"{num} DA à payer"
+    if cents < 0:
+        return f"Avoir {num} DA"
+    return "0 DA"
+
+
 def format_balance_ticket(cents: int) -> str:
     """Solde pour ticket papier : nombre brut + label (dette)/(avoir)/✓."""
     num = f"{round(abs(cents) / 100):,}".replace(",", " ")

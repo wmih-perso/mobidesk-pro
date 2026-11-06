@@ -10,6 +10,7 @@ import datetime
 import json
 import sqlite3
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -134,7 +135,7 @@ def perform_backup(config: dict) -> tuple[bool, str]:
     try:
         db_path = get_database_path()
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"stock_backup_{timestamp}.db"
+        backup_name = f"stock_backup_{_computer_name()}_{timestamp}.db"
         tmp = _CONFIG_DIR / backup_name
         # API de sauvegarde SQLite : copie cohérente même si l'application
         # écrit dans la base au même moment (contrairement à une copie
@@ -176,6 +177,128 @@ def upload_backup(on_done: Callable[[bool, str], None], config: dict | None = No
     if config is None:
         config = load_backup_config()
     threading.Thread(target=lambda: on_done(*perform_backup(config)), daemon=True).start()
+
+
+def _computer_name() -> str:
+    """Nom du PC (dans le nom des sauvegardes, pour savoir d'où elles viennent)."""
+    import os
+    import re
+
+    name = os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "PC"
+    return re.sub(r"[^A-Za-z0-9-]", "", name.upper())[:30] or "PC"
+
+
+# ---------------------------------------------------------------------------
+# Récupération depuis le cloud
+# ---------------------------------------------------------------------------
+
+_PENDING_RESTORE_PATH = _CONFIG_DIR / "pending_restore.db"
+# Argument passé à la nouvelle instance lancée après une récupération.
+RESTART_FLAG = "--apres-recuperation"
+_LOCAL_BACKUP_DIR = _CONFIG_DIR / "backups"
+
+# Tables indispensables : un fichier sans elles n'est pas une base MobiDesk.
+_REQUIRED_TABLES = {"displays", "stock_movements", "suppliers", "resellers", "users"}
+
+
+@dataclass
+class CloudBackup:
+    key: str
+    name: str
+    uploaded_at: datetime.datetime  # heure locale du dépôt sur le cloud
+    size: int
+
+
+def list_cloud_backups(config: dict) -> list[CloudBackup]:
+    """Les fichiers .db du dossier de sauvegarde, le plus récemment déposé
+    en premier (date de dépôt sur le cloud, pas le nom du fichier)."""
+    client = _make_client(config)
+    prefix = config.get("prefix", "mobidesk-backups/")
+    backups: list[CloudBackup] = []
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=config["bucket_name"], Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.lower().endswith(".db"):
+                continue
+            backups.append(CloudBackup(
+                key=key,
+                name=key[len(prefix):] if key.startswith(prefix) else key,
+                uploaded_at=obj["LastModified"].astimezone().replace(tzinfo=None),
+                size=obj.get("Size", 0),
+            ))
+    backups.sort(key=lambda b: b.uploaded_at, reverse=True)
+    return backups
+
+
+def check_database_file(path: Path) -> None:
+    """Lève ValueError si le fichier n'est pas une base MobiDesk valide."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            result = conn.execute("PRAGMA integrity_check").fetchone()
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as exc:
+        raise ValueError(f"Ce fichier n'est pas une base de données valide ({exc}).") from exc
+    if not result or result[0] != "ok":
+        raise ValueError("Le fichier est abîmé (contrôle d'intégrité échoué).")
+    missing = _REQUIRED_TABLES - tables
+    if missing:
+        raise ValueError("Ce fichier n'est pas une base MobiDesk (tables manquantes : "
+                         + ", ".join(sorted(missing)) + ").")
+
+
+def download_for_restore(config: dict, key: str) -> None:
+    """Télécharge `key`, le vérifie et le prépare : il remplacera la base au
+    prochain démarrage (apply_pending_restore). Lève une exception en cas
+    d'échec ; la base actuelle n'est alors pas touchée."""
+    tmp = _CONFIG_DIR / "restore_download.tmp"
+    try:
+        _make_client(config).download_file(config["bucket_name"], key, str(tmp))
+        check_database_file(tmp)
+        _PENDING_RESTORE_PATH.unlink(missing_ok=True)
+        tmp.replace(_PENDING_RESTORE_PATH)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def apply_pending_restore() -> Path | None:
+    """Au démarrage, avant d'ouvrir la base : si une base récupérée du cloud
+    attend, garde une copie de la base actuelle dans data/backups puis la
+    remplace. Retourne le chemin de la copie, ou None si rien à faire."""
+    if not _PENDING_RESTORE_PATH.exists():
+        return None
+    import time
+
+    db_path = get_database_path()
+    _LOCAL_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    copy = _LOCAL_BACKUP_DIR / f"stock_avant_recuperation_{datetime.datetime.now():%Y%m%d_%H%M%S}.db"
+    # L'ancienne instance peut mettre un instant à libérer le fichier.
+    for attempt in range(20):
+        try:
+            if db_path.exists():
+                source = sqlite3.connect(str(db_path))
+                target = sqlite3.connect(str(copy))
+                try:
+                    source.backup(target)
+                finally:
+                    target.close()
+                    source.close()
+            for suffix in ("-wal", "-shm", "-journal"):
+                Path(str(db_path) + suffix).unlink(missing_ok=True)
+            _PENDING_RESTORE_PATH.replace(db_path)
+            break
+        except (OSError, sqlite3.Error):
+            if attempt == 19:
+                raise
+            time.sleep(0.5)
+    for old in sorted(_LOCAL_BACKUP_DIR.glob("stock_avant_recuperation_*.db"))[:-10]:
+        old.unlink(missing_ok=True)
+    return copy
 
 
 def is_close_backup_due(config: dict) -> bool:

@@ -120,3 +120,85 @@ def test_close_backup_only_when_database_changed(config_dir, monkeypatch):
 
     assert not backup.is_close_backup_due({**config, "backup_on_close": False})
     assert not backup.is_close_backup_due({**config, "enabled": False})
+
+
+def _make_mobidesk_db(path, value="x"):
+    conn = sqlite3.connect(path)
+    with conn:
+        for table in ("displays", "stock_movements", "suppliers", "resellers", "users"):
+            conn.execute(f"CREATE TABLE {table} (id INTEGER)")
+        conn.execute("CREATE TABLE t (value TEXT)")
+        conn.execute("INSERT INTO t VALUES (?)", (value,))
+    conn.close()
+
+
+def _read_value(path):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT value FROM t").fetchone()[0]
+    finally:
+        conn.close()
+
+
+@pytest.fixture()
+def restore_dirs(config_dir, monkeypatch):
+    monkeypatch.setattr(backup, "_PENDING_RESTORE_PATH", config_dir / "pending_restore.db")
+    monkeypatch.setattr(backup, "_LOCAL_BACKUP_DIR", config_dir / "backups")
+    db_path = config_dir / "stock.db"
+    monkeypatch.setattr(backup, "get_database_path", lambda: db_path)
+    return db_path
+
+
+class _FakeListS3:
+    def __init__(self, objects, files=None):
+        self.objects = objects
+        self.files = files or {}
+
+    def get_paginator(self, _name):
+        objects = self.objects
+
+        class _P:
+            def paginate(self, Bucket, Prefix):
+                return [{"Contents": objects}]
+
+        return _P()
+
+    def download_file(self, bucket, key, dest):
+        import shutil
+        shutil.copy(self.files[key], dest)
+
+
+def test_list_cloud_backups_sorted_by_upload_date_not_name(config_dir, monkeypatch):
+    utc = datetime.timezone.utc
+    objects = [
+        {"Key": "p/stock_backup_MAGASIN_20991231_235959.db", "LastModified": datetime.datetime(2026, 11, 5, 10, tzinfo=utc), "Size": 10},
+        {"Key": "p/ma_base.db", "LastModified": datetime.datetime(2026, 11, 6, 22, tzinfo=utc), "Size": 20},
+        {"Key": "p/notes.txt", "LastModified": datetime.datetime(2026, 11, 7, tzinfo=utc), "Size": 1},
+    ]
+    monkeypatch.setattr(backup, "_make_client", lambda config: _FakeListS3(objects))
+    result = backup.list_cloud_backups({**CREDENTIALS, "prefix": "p/"})
+    assert [b.name for b in result] == ["ma_base.db", "stock_backup_MAGASIN_20991231_235959.db"]
+
+
+def test_restore_rejects_a_bad_file_and_keeps_the_database(restore_dirs, config_dir, monkeypatch):
+    _make_mobidesk_db(restore_dirs, "actuelle")
+    bad = config_dir / "bad.db"
+    bad.write_bytes(b"pas une base")
+    monkeypatch.setattr(backup, "_make_client", lambda config: _FakeListS3([], {"k": bad}))
+    with pytest.raises(ValueError):
+        backup.download_for_restore(CREDENTIALS, "k")
+    assert backup.apply_pending_restore() is None
+
+
+def test_restore_replaces_database_and_keeps_a_copy(restore_dirs, config_dir, monkeypatch):
+    _make_mobidesk_db(restore_dirs, "actuelle")
+    good = config_dir / "cloud.db"
+    _make_mobidesk_db(good, "cloud")
+    monkeypatch.setattr(backup, "_make_client", lambda config: _FakeListS3([], {"k": good}))
+
+    backup.download_for_restore(CREDENTIALS, "k")
+    copy = backup.apply_pending_restore()
+
+    assert _read_value(restore_dirs) == "cloud"
+    assert _read_value(copy) == "actuelle"
+    assert backup.apply_pending_restore() is None  # une seule fois
