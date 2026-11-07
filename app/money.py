@@ -39,10 +39,7 @@ def format_supplier_balance(cents: int) -> str:
 
 
 def group_thousands(value: int) -> str:
-    """Nombre pour les tickets : pas d'espace jusqu'à 4 chiffres (1500),
-    espace des milliers à partir de 5 (12 500)."""
-    if abs(value) < 10_000:
-        return str(value)
+    """Nombre pour les tickets, avec espace des milliers (1 680, 12 500)."""
     return f"{value:,}".replace(",", " ")
 
 

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.money import format_balance_ticket
-from app.printing import _collect_ticket_data, _da
+from app.printing import _collect_ticket_data, _da, _da_line
 from app.ticket_config import load_ticket_config
 from app.ui.frameless_dialog import FramelessDialog
 
@@ -68,7 +68,7 @@ class TicketPreviewDialog(FramelessDialog):
 
         self._browser = QTextBrowser()
         self._browser.setOpenLinks(False)
-        self._browser.setFixedWidth(240)
+        self._browser.setFixedWidth(270)
         self._browser.setMinimumHeight(460)
         self._browser.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._browser.setStyleSheet(
@@ -138,9 +138,9 @@ class TicketPreviewDialog(FramelessDialog):
             lines_html += (
                 f"<tr>"
                 f"<td style='padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;'>{line['label']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{line['qty']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{_da(line['unit_cents'])}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{_da(line['total_cents'])}</td>"
+                f"<td style='text-align:center;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{line['qty']}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'><nobr>{_da_line(line['unit_cents']).replace(' ', '&nbsp;')}</nobr></td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'><nobr>{_da_line(line['total_cents']).replace(' ', '&nbsp;')}</nobr></td>"
                 f"</tr>"
             )
 
@@ -230,8 +230,8 @@ class TicketPreviewDialog(FramelessDialog):
          style="border-collapse:collapse;font-size:10px;">
     <thead>
       <tr>
-        <th style="text-align:left;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">LIBELLE</th>
-        <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">QTE</th>
+        <th width="38%" style="text-align:left;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">LIBELLE</th>
+        <th width="12%" style="text-align:center;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">QTE</th>
         <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">P.U</th>
         <th style="text-align:right;padding:3px 2px;border-bottom:1.5px solid #1a1a1a;">TOTAL</th>
       </tr>

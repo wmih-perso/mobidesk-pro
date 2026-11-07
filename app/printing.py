@@ -19,11 +19,16 @@ from app.ticket_config import load_ticket_config
 
 
 def _da(cents: int) -> str:
-    """Centimes → chaîne DA sans suffixe pour les tickets. Pas d'espace
-    pour 4 chiffres (250000 → '2500') : dans la colonne étroite P.U,
-    « 1 500 » se lisait comme deux nombres. Espace dès 5 chiffres
-    (1250000 → '12 500')."""
+    """Centimes → chaîne DA sans suffixe (ex: 250000 → '2 500')."""
     return group_thousands(round(cents / 100))
+
+
+def _da_line(cents: int) -> str:
+    """Prix d'une ligne de ticket, comme sur les tickets fournisseurs :
+    168000 → '1 680.00'."""
+    sign = "-" if cents < 0 else ""
+    cents = abs(cents)
+    return f"{sign}{group_thousands(cents // 100)}.{cents % 100:02d}"
 
 
 def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict | None:
@@ -582,14 +587,17 @@ def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
     double_rule()
 
     # ── En-tête colonnes ─────────────────────────────────────────────
-    cw = [int(W * 0.48), int(W * 0.10), int(W * 0.20), int(W * 0.22)]
+    # Quantité centrée dans sa propre colonne, bien séparée du prix (comme
+    # sur les tickets fournisseurs).
+    cw = [int(W * 0.37), int(W * 0.13), int(W * 0.25), int(W * 0.25)]
     cx = [sum(cw[:i]) for i in range(4)]
     h_hdr = lh(12)
     painter.setFont(_font(12, bold=True))
     for label, x, w_col, al in zip(
-        ["ARTICLE", "Q", "P.U", "TOT"],
+        ["ARTICLE", "QTE", "P.U", "TOTAL"],
         cx, cw,
-        [Qt.AlignmentFlag.AlignLeft] + [Qt.AlignmentFlag.AlignRight] * 3,
+        [Qt.AlignmentFlag.AlignLeft, Qt.AlignmentFlag.AlignHCenter]
+        + [Qt.AlignmentFlag.AlignRight] * 2,
     ):
         painter.drawText(QRect(x, y, w_col, h_hdr), int(al) | Qt.TextFlag.TextSingleLine, label)
     y += h_hdr
@@ -609,14 +617,19 @@ def _draw_ticket(painter: QPainter, data: dict, W: int) -> int:
         label_h = max(h_body, needed + 4)
         painter.drawText(QRect(cx[0], y, cw[0] - 4, label_h), wrap, line["label"])
         painter.drawText(QRect(cx[1], y, cw[1], h_body),
-                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                         Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextSingleLine,
                          str(line["qty"]))
-        painter.drawText(QRect(cx[2], y, cw[2], h_body),
-                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                         _da(line["unit_cents"]))
-        painter.drawText(QRect(cx[3], y, cw[3], h_body),
-                         Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
-                         _da(line["total_cents"]))
+        for column, cents in ((2, line["unit_cents"]), (3, line["total_cents"])):
+            # Un grand montant (« 150 000.00 ») ne doit pas toucher la
+            # colonne voisine : police réduite jusqu'à ce qu'il tienne.
+            text, size, room = _da_line(cents), 13, cw[column] - 10
+            while size > 8 and painter.fontMetrics().horizontalAdvance(text) > room:
+                size -= 1
+                painter.setFont(_font(size))
+            painter.drawText(QRect(cx[column], y, cw[column], h_body),
+                             Qt.AlignmentFlag.AlignRight | Qt.TextFlag.TextSingleLine,
+                             text)
+            painter.setFont(_font(13))
         y += label_h
 
         painter.setPen(QPen(Qt.GlobalColor.black, 1, Qt.PenStyle.DotLine))
