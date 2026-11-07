@@ -58,11 +58,12 @@ def list_displays(
     displays = list(session.scalars(stmt).all())
     if search.strip():
         # Recherche par mots (app/search.py) : tous les mots, n'importe où.
-        from app.search import filter_and_rank
+        from app.search import brand_words, filter_and_rank
 
         displays = filter_and_rank(
             search, displays,
             lambda d: (d.reference, d.category, d.brand, d.phone_model, d.quality, d.aliases),
+            optional_words=brand_words(list_brands(session)),
         )
     return displays
 

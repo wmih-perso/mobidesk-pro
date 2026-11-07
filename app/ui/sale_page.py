@@ -39,7 +39,7 @@ from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
-from app.search import filter_and_rank
+from app.search import brand_words, filter_and_rank
 
 MONTH_NAMES_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -382,6 +382,7 @@ class SalePage(QWidget):
             ]
             self._models_by_id = {d.id: split_models(d.phone_model) for d in displays}
             self._aliases_by_id = {d.id: d.aliases for d in displays if d.aliases}
+            self._brand_words = brand_words(d.brand for d in displays if d.brand)
             resellers = list_resellers(session)
 
         current_id = self.reseller_combo.currentData() if hasattr(self, "reseller_combo") else None
@@ -715,6 +716,7 @@ class SalePage(QWidget):
             text,
             [c for c in self._display_choices if c[0] not in already],
             lambda c: (c[1], c[2], c[3], self._aliases_by_id.get(c[0], "")),  # référence, marque + modèle, catégorie, alias
+            optional_words=self._brand_words,
         )
         if not matches:
             self.search_results.setVisible(False)

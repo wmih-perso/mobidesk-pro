@@ -39,7 +39,6 @@ from app.services import (
     StockError,
     UNKNOWN_CATEGORY_COLOR,
     category_colors,
-    list_brands,
     list_categories,
     count_low_stock_displays,
     count_movements,
@@ -123,6 +122,11 @@ DISPLAY_COLUMNS = [
 # index de colonne -> (couleur du texte, titre court avec pastille). Le
 # titre court ne sert qu'à l'écran ; l'export CSV garde DISPLAY_COLUMNS.
 CATEGORY_COLUMN = DISPLAY_COLUMNS.index("Catégorie")
+# Colonnes qu'un clic sur le titre permet de classer -> clé de tri.
+SORTABLE_COLUMNS = {
+    CATEGORY_COLUMN: lambda d: (d.category or "").lower(),
+    DISPLAY_COLUMNS.index("Quantité"): lambda d: d.quantity,
+}
 # Colonnes de montants, alignées à droite (titres compris).
 MONEY_COLUMNS = {
     DISPLAY_COLUMNS.index("Prix achat"),
@@ -543,10 +547,6 @@ class MainWindow(QMainWindow):
         self.stock_filter.blockSignals(False)
         search_row.addWidget(self.stock_filter)
         search_row.addSpacing(8)
-        self.brand_filter = _filter_combo(170)
-        self.brand_filter.setToolTip("Filtrer par marque")
-        search_row.addWidget(self.brand_filter)
-        search_row.addSpacing(8)
         self.reset_filters_btn = QPushButton("✕  Réinitialiser")
         self.reset_filters_btn.setObjectName("SecondaryButton")
         self.reset_filters_btn.setToolTip("Retirer la recherche et tous les filtres")
@@ -620,6 +620,30 @@ class MainWindow(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         self.displays_table.doubleClicked.connect(self._on_edit)
+        self._sort_column: int | None = None
+        self._sort_descending = False
+        self.displays_table.horizontalHeader().setSectionsClickable(True)
+        self.displays_table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+        for column in SORTABLE_COLUMNS:
+            self.displays_table.horizontalHeaderItem(column).setToolTip(
+                "Cliquer pour classer (croissant, décroissant, puis ordre habituel)"
+            )
+
+        self.filter_hint = QFrame()
+        self.filter_hint.setStyleSheet(
+            "QFrame { background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; }"
+        )
+        hint_layout = QHBoxLayout(self.filter_hint)
+        hint_layout.setContentsMargins(12, 8, 12, 8)
+        self.filter_hint_label = QLabel("")
+        self.filter_hint_label.setStyleSheet("color: #9a3412; font-weight: 700; border: none;")
+        hint_layout.addWidget(self.filter_hint_label, stretch=1)
+        clear_filter_btn = QPushButton("Enlever le filtre")
+        clear_filter_btn.setObjectName("SecondaryButton")
+        clear_filter_btn.clicked.connect(self._clear_filters_keep_search)
+        hint_layout.addWidget(clear_filter_btn)
+        self.filter_hint.setVisible(False)
+        layout.addWidget(self.filter_hint)
         layout.addWidget(self.displays_table, stretch=1)
 
         self.displays_empty_state = EmptyState(
@@ -1404,13 +1428,11 @@ class MainWindow(QMainWindow):
             self.capital_page.refresh()
 
     def _reload_filter_choices(self) -> None:
-        """(Re)remplit les listes Catégorie et Marque en gardant le choix."""
+        """(Re)remplit la liste Catégorie en gardant le choix."""
         with session_scope() as session:
             categories = [(c.name, c.color) for c in list_categories(session)]
-            brands = list_brands(session)
         for combo, all_label, entries in (
             (self.category_filter, "Catégorie : toutes", categories),
-            (self.brand_filter, "Marque : toutes", [(b, None) for b in brands]),
         ):
             current = combo.currentData()
             combo.blockSignals(True)
@@ -1429,11 +1451,61 @@ class MainWindow(QMainWindow):
             self.search_input.text().strip()
             or self.category_filter.currentData()
             or self.stock_filter.currentData()
-            or self.brand_filter.currentData()
         )
 
+    def _active_filter_labels(self) -> list[str]:
+        return [
+            combo.currentText()
+            for combo in (self.category_filter, self.stock_filter)
+            if combo.currentData()
+        ]
+
+    def _show_filter_hint(self, filters: list[str]) -> None:
+        if filters:
+            names = ", ".join(f"« {name} »" for name in filters)
+            self.filter_hint_label.setText(
+                f"⚠  Aucun résultat avec le filtre {names}. "
+                "Voici ce qui existe sans ce filtre :"
+            )
+        self.filter_hint.setVisible(bool(filters))
+
+    def _clear_filters_keep_search(self) -> None:
+        for combo in (self.category_filter, self.stock_filter):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+        self._on_filters_changed()
+
+    def _on_header_clicked(self, column: int) -> None:
+        """Clic sur « Catégorie » ou « Quantité » : croissant, puis
+        décroissant, puis retour à l'ordre habituel."""
+        if column not in SORTABLE_COLUMNS:
+            return
+        if self._sort_column != column:
+            self._sort_column, self._sort_descending = column, False
+        elif not self._sort_descending:
+            self._sort_descending = True
+        else:
+            self._sort_column = None
+        self._current_page = 1
+        self._sort_displays()
+        self._render_current_page(None)
+
+    def _sort_displays(self) -> None:
+        # Flèche dans le titre (le style de l'en-tête masque l'indicateur Qt).
+        for column in SORTABLE_COLUMNS:
+            arrow = ""
+            if column == self._sort_column:
+                arrow = "  ▼" if self._sort_descending else "  ▲"
+            self.displays_table.horizontalHeaderItem(column).setText(DISPLAY_COLUMNS[column] + arrow)
+        if self._sort_column is None:
+            return
+        key = SORTABLE_COLUMNS[self._sort_column]
+        # Tri stable : à égalité, l'ordre de la recherche est conservé.
+        self._filtered_displays.sort(key=key, reverse=self._sort_descending)
+
     def _reset_filters(self) -> None:
-        for combo in (self.category_filter, self.stock_filter, self.brand_filter):
+        for combo in (self.category_filter, self.stock_filter):
             combo.blockSignals(True)
             combo.setCurrentIndex(0)
             combo.blockSignals(False)
@@ -1448,9 +1520,17 @@ class MainWindow(QMainWindow):
                 session,
                 search=self.search_input.text(),
                 category=self.category_filter.currentData(),
-                brand=self.brand_filter.currentData(),
                 stock_state=self.stock_filter.currentData(),
             )
+            # Rien trouvé à cause d'un filtre : on montre ce qui existe sans
+            # les filtres, avec un bandeau qui l'explique.
+            hidden_by = self._active_filter_labels()
+            showing_unfiltered = False
+            if not self._filtered_displays and self.search_input.text().strip() and hidden_by:
+                self._filtered_displays = list_displays(session, search=self.search_input.text())
+                showing_unfiltered = bool(self._filtered_displays)
+        self._sort_displays()
+        self._show_filter_hint(hidden_by if showing_unfiltered else [])
         self.reset_filters_btn.setVisible(self._filters_active())
         with session_scope() as session:
             total_count = len(all_active)

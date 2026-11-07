@@ -27,14 +27,36 @@ def search_words(query: str) -> list[str]:
     return normalize(query).split()
 
 
+def _glued_word_matches(word: str, haystack: str) -> bool:
+    """Mot tapé sans espace (« affa76 ») : vrai s'il se découpe en morceaux
+    qui commencent chacun un mot du texte (« aff » + « a76 »)."""
+    if len(word) < 4:
+        return False
+    reachable = [True] + [False] * len(word)
+    for start in range(len(word)):
+        if not reachable[start]:
+            continue
+        for end in range(start + 2, len(word) + 1):
+            if not reachable[end] and f" {word[start:end]}" in haystack:
+                reachable[end] = True
+    return reachable[-1]
+
+
+def _word_matches(word: str, haystack: str) -> bool:
+    return word in haystack or _glued_word_matches(word, haystack)
+
+
 def matches(query: str, *fields: str) -> bool:
     """Tous les mots de `query` se trouvent dans l'un des `fields` réunis.
     Une recherche vide correspond à tout."""
-    words = search_words(query)
+    return _matches_words(search_words(query), fields)
+
+
+def _matches_words(words: list[str], fields) -> bool:
     if not words:
         return True
     haystack = normalize(" ".join(field or "" for field in fields))
-    return all(word in haystack for word in words)
+    return all(_word_matches(word, haystack) for word in words)
 
 
 def rank(query: str, *fields: str) -> int:
@@ -50,11 +72,33 @@ def rank(query: str, *fields: str) -> int:
     return score
 
 
-def filter_and_rank(query: str, items: list, fields) -> list:
+def filter_and_rank(query: str, items: list, fields, optional_words=frozenset()) -> list:
     """Éléments de `items` qui correspondent à `query`, les plus pertinents
     d'abord (ordre d'origine conservé à égalité). `fields(item)` renvoie
-    les textes où chercher."""
-    if not search_words(query):
+    les textes où chercher.
+
+    `optional_words` (ex. les marques, déjà normalisées) : si la recherche
+    en contient, on ajoute après les résultats exacts ceux qui
+    correspondent sans ces mots — « aff oppo a76 » trouve aussi l'afficheur
+    « REALME 8I 9I A76 A96 », commun aux deux marques."""
+    words = search_words(query)
+    if not words:
         return list(items)
-    found = [item for item in items if matches(query, *fields(item))]
-    return sorted(found, key=lambda item: rank(query, *fields(item)))
+    found = [item for item in items if _matches_words(words, fields(item))]
+    found.sort(key=lambda item: rank(query, *fields(item)))
+    remaining = [word for word in words if word not in optional_words]
+    if remaining and len(remaining) < len(words):
+        exact = {id(item) for item in found}
+        extra = [
+            item for item in items
+            if id(item) not in exact and _matches_words(remaining, fields(item))
+        ]
+        reduced = " ".join(remaining)
+        extra.sort(key=lambda item: rank(reduced, *fields(item)))
+        found += extra
+    return found
+
+
+def brand_words(brands) -> frozenset[str]:
+    """Mots des noms de marque, au format de la recherche (pour `optional_words`)."""
+    return frozenset(word for brand in brands for word in search_words(brand))
