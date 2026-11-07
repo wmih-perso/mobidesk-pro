@@ -13,14 +13,17 @@ from PySide6.QtWidgets import QMessageBox
 from app.database import session_scope
 from app.labels import article_label
 from app.models import Display, StockMovement
-from app.money import format_balance_ticket
+from app.money import format_balance_ticket, group_thousands
 from app.printer_config import PAPER_LABEL, PAPER_ROLL, PAPER_SHEET, load_printer_config, paper_description
 from app.ticket_config import load_ticket_config
 
 
 def _da(cents: int) -> str:
-    """Centimes → chaîne DA sans suffixe (ex: 250000 → '2 500')."""
-    return f"{round(cents / 100):,}".replace(",", " ")
+    """Centimes → chaîne DA sans suffixe pour les tickets. Pas d'espace
+    pour 4 chiffres (250000 → '2500') : dans la colonne étroite P.U,
+    « 1 500 » se lisait comme deux nombres. Espace dès 5 chiffres
+    (1250000 → '12 500')."""
+    return group_thousands(round(cents / 100))
 
 
 def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict | None:

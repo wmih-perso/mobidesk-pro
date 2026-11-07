@@ -138,9 +138,9 @@ class TicketPreviewDialog(FramelessDialog):
             lines_html += (
                 f"<tr>"
                 f"<td style='padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;'>{line['label']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{line['qty']}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{_da(line['unit_cents'])}</td>"
-                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;'>{_da(line['total_cents'])}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{line['qty']}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{_da(line['unit_cents'])}</td>"
+                f"<td style='text-align:right;padding:4px 2px;border-bottom:1px dotted #d4d0cb;font-size:10px;vertical-align:top;white-space:nowrap;'>{_da(line['total_cents'])}</td>"
                 f"</tr>"
             )
 
