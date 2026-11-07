@@ -24,11 +24,8 @@ def _da(cents: int) -> str:
 
 
 def _da_line(cents: int) -> str:
-    """Prix d'une ligne de ticket, comme sur les tickets fournisseurs :
-    168000 → '1 680.00'."""
-    sign = "-" if cents < 0 else ""
-    cents = abs(cents)
-    return f"{sign}{group_thousands(cents // 100)}.{cents % 100:02d}"
+    """Prix d'une ligne de ticket, sans décimales : 168000 → '1 680'."""
+    return _da(cents)
 
 
 def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict | None:
