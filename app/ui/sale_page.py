@@ -48,14 +48,6 @@ MONTH_NAMES_FR = [
 DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 SEARCH_VISIBLE_ROWS = 8  # hauteur de la liste des résultats de recherche (en produits)
-MODEL_REQUIRED_MESSAGE = "⚠ Sélectionnez le modèle de l'afficheur (case en rouge) avant le paiement."
-
-
-def _is_display_category(category: str) -> bool:
-    """Catégorie « Afficheur » (ou AFF, LCD…) — seule concernée par le
-    choix obligatoire du modèle."""
-    name = (category or "").strip().upper()
-    return name.startswith(("AFF", "LCD"))
 MAX_OPEN_SALES = 5  # ventes en cours en même temps (onglets)
 
 
@@ -794,14 +786,7 @@ class SalePage(QWidget):
             model_combo.addItem(m, m)
         model_combo.setFixedHeight(34)
         model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        # Afficheur compatible avec plusieurs modèles : le choix du modèle
-        # est obligatoire avant le paiement (voir _check_models_chosen).
-        model_combo.setProperty(
-            "model_required", _is_display_category(category) and len(models) > 1
-        )
-        model_combo.currentIndexChanged.connect(
-            lambda _i, combo=model_combo: self._on_model_changed(combo)
-        )
+        model_combo.currentIndexChanged.connect(self._on_cart_changed)
         self.lines_table.setCellWidget(row, 1, _spin_cell(model_combo))
 
         # Col 2 — Stock
@@ -903,38 +888,11 @@ class SalePage(QWidget):
     # Paiement
     # ──────────────────────────────────────────────────────────────────
 
-    def _on_model_changed(self, combo: QComboBox) -> None:
-        if combo.currentData():
-            combo.setStyleSheet("")  # retire le cadre rouge
-            if self.error_label.text() == MODEL_REQUIRED_MESSAGE:
-                self.error_label.setText("")
-        self._on_cart_changed()
-
-    def _check_models_chosen(self) -> bool:
-        """Afficheurs à plusieurs modèles restés sur « — » : cadre rouge +
-        message, et le paiement est bloqué."""
-        missing = [
-            combo for *_rest, combo in self._line_rows
-            if combo.property("model_required") and not combo.currentData()
-        ]
-        for combo in missing:
-            combo.setStyleSheet(
-                "QComboBox { border: 2px solid #dc2626; border-radius: 4px; background: #fef2f2; }"
-            )
-        if missing:
-            self.error_label.setText(MODEL_REQUIRED_MESSAGE)
-            missing[0].setFocus()
-            return False
-        return True
-
     def _on_pay_clicked(self) -> None:
         self.error_label.setText("")
 
         if not self._line_rows:
             self.error_label.setText("Ajoutez au moins une pièce au panier.")
-            return
-
-        if not self._check_models_chosen():
             return
 
         sale_type = self._sale_type()
