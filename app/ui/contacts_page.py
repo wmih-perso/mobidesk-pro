@@ -26,7 +26,9 @@ from PySide6.QtWidgets import (
 
 from app import session as _session
 from app.database import session_scope
+from app.labels import article_label
 from app.money import format_balance, format_balance_ticket, format_da, format_supplier_balance
+from app.search import filter_and_rank, matches
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ALIGN_RIGHT, right_align_headers
 from app.services import (
@@ -102,7 +104,22 @@ class ContactsPage(QWidget):
         hint = QLabel("Sélectionnez un contact pour voir son historique.")
         hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
         layout.addWidget(hint)
-        layout.addSpacing(14)
+        layout.addSpacing(10)
+
+        search_row = QHBoxLayout()
+        self._contact_search = QLineEdit()
+        self._contact_search.setPlaceholderText(f"🔍  Rechercher un {noun} (nom, téléphone, adresse)…")
+        self._contact_search.setClearButtonEnabled(True)
+        self._contact_search.setMinimumHeight(36)
+        self._contact_search.setMaximumWidth(520)
+        self._contact_search.textChanged.connect(self._render_contacts)
+        search_row.addWidget(self._contact_search)
+        self._contact_count = QLabel("")
+        self._contact_count.setStyleSheet("color: #64748b; font-size: 12px; padding-left: 10px;")
+        search_row.addWidget(self._contact_count)
+        search_row.addStretch()
+        layout.addLayout(search_row)
+        layout.addSpacing(10)
 
         # Splitter vertical
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -166,13 +183,35 @@ class ContactsPage(QWidget):
     def refresh(self) -> None:
         with session_scope() as session:
             if self._mode == "resellers":
-                self._contacts = list_resellers(session)
+                self._all_contacts = list_resellers(session)
             else:
-                self._contacts = list_suppliers(session)
+                self._all_contacts = list_suppliers(session)
+        self._render_contacts()
+        if self._selected_id is not None:
+            contact = next((c for c in self._all_contacts if c.id == self._selected_id), None)
+            if contact is not None:
+                self._load_detail(contact.id, contact.name)
+
+    def _render_contacts(self) -> None:
+        """Liste des contacts, filtrée par le champ de recherche du haut."""
+        query = self._contact_search.text()
+        self._contacts = filter_and_rank(
+            query, self._all_contacts, lambda c: (c.name, c.phone or "", c.address or "")
+        )
+        total = len(self._all_contacts)
+        self._contact_count.setText(
+            f"{len(self._contacts)} sur {total}" if query.strip() else f"{total} au total"
+        )
 
         has = bool(self._contacts)
         self.contacts_table.setVisible(has)
         self._empty_label.setVisible(not has)
+        self._empty_label.setText(
+            "Aucun contact ne correspond à la recherche." if self._all_contacts
+            else "Aucun contact enregistré.\nCliquez sur « Nouveau » pour en ajouter un."
+        )
+        self.contacts_table.blockSignals(True)
+        self.contacts_table.setRowCount(0)
         self.contacts_table.setRowCount(len(self._contacts))
 
         for i, c in enumerate(self._contacts):
@@ -196,9 +235,9 @@ class ContactsPage(QWidget):
                                            versement_cb=self._on_versement,
                                            adjust_cb=adjust_cb)
             self.contacts_table.setCellWidget(i, 4, actions)
-
-        if self._selected_id is not None:
-            self._load_detail(self._selected_id)
+            if c.id == self._selected_id:
+                self.contacts_table.selectRow(i)
+        self.contacts_table.blockSignals(False)
 
     def _on_selection_changed(self) -> None:
         rows = self.contacts_table.selectionModel().selectedRows()
@@ -209,10 +248,11 @@ class ContactsPage(QWidget):
         row = rows[0].row()
         if row < len(self._contacts):
             contact = self._contacts[row]
+            new_contact = contact.id != self._selected_id
             self._selected_id = contact.id
-            self._load_detail(contact.id, contact.name)
+            self._load_detail(contact.id, contact.name, new_contact=new_contact)
 
-    def _load_detail(self, contact_id: int, contact_name: str = "") -> None:
+    def _load_detail(self, contact_id: int, contact_name: str = "", new_contact: bool = False) -> None:
         with session_scope() as session:
             if self._mode == "resellers":
                 movements = list_movements(session, reseller_id=contact_id)
@@ -229,11 +269,22 @@ class ContactsPage(QWidget):
             mvt_rows = []
             for m in movements:
                 is_entry = m.change_quantity > 0
-                unit_price = m.unit_purchase_price_cents if is_entry else m.unit_sale_price_cents
+                unit_price = (m.unit_purchase_price_cents if is_entry else m.unit_sale_price_cents) or 0
                 qty = abs(m.change_quantity)
+                date = m.created_at.strftime("%d/%m/%Y %H:%M")
+                d = m.display
+                ref = d.reference if d else "—"
+                product = article_label(d.category, d.phone_model, d.reference, m.model_label) if d else "—"
+                # Texte de recherche : date, référence, produit (catégorie,
+                # marque, modèle) et anciennes références fusionnées.
+                search_text = " ".join(
+                    [date, ref, product]
+                    + ([d.category, d.brand, d.phone_model, d.aliases or ""] if d else [])
+                )
                 mvt_rows.append((
-                    m.created_at.strftime("%d/%m/%Y %H:%M"),
-                    m.display.reference if m.display else "—",
+                    date,
+                    ref,
+                    product,
                     "Entrée" if is_entry else "Sortie",
                     qty,
                     format_da(unit_price),
@@ -241,6 +292,7 @@ class ContactsPage(QWidget):
                     m.movement_batch_id,
                     m.id,
                     m.is_sale,
+                    search_text,
                 ))
 
             fmt = _format_for(self._mode)
@@ -260,6 +312,7 @@ class ContactsPage(QWidget):
             contact_name, mvt_rows, pay_rows, balance,
             refresh_cb=lambda: self._load_detail(contact_id, contact_name),
             global_refresh_cb=self.stock_changed.emit,
+            new_contact=new_contact,
         )
 
     # ------------------------------------------------------------------
@@ -405,12 +458,75 @@ def _contact_action_cell(
 # Panneau de détail (mouvements + versements)
 # ---------------------------------------------------------------------------
 
+PAGE_SIZE = 25
+
+
+def _search_box(placeholder: str, on_change) -> QLineEdit:
+    box = QLineEdit()
+    box.setPlaceholderText(placeholder)
+    box.setClearButtonEnabled(True)
+    box.setMinimumHeight(32)
+    box.textChanged.connect(on_change)
+    return box
+
+
+class _Pager(QWidget):
+    """◀ Page 1 / 3 ▶ + compteur, sous un tableau."""
+
+    def __init__(self, on_page) -> None:
+        super().__init__()
+        self._on_page = on_page
+        self.page = 1
+        self.pages = 1
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 4, 12, 6)
+        self._count = QLabel("")
+        self._count.setStyleSheet("color: #64748b; font-size: 12px;")
+        row.addWidget(self._count)
+        row.addStretch()
+        self._prev = QPushButton("◀")
+        self._next = QPushButton("▶")
+        for button in (self._prev, self._next):
+            button.setObjectName("IconButton")
+            button.setFixedSize(32, 28)
+        self._prev.clicked.connect(lambda: self._go(self.page - 1))
+        self._next.clicked.connect(lambda: self._go(self.page + 1))
+        self._label = QLabel("")
+        self._label.setStyleSheet("font-weight: 600; color: #374151; padding: 0 8px;")
+        row.addWidget(self._prev)
+        row.addWidget(self._label)
+        row.addWidget(self._next)
+        row.addStretch()
+
+    def _go(self, page: int) -> None:
+        page = max(1, min(page, self.pages))
+        if page != self.page:
+            self.page = page
+            self._on_page()
+
+    def update_state(self, shown: int, total: int, noun: str, searching: bool) -> None:
+        self.pages = max(1, -(-shown // PAGE_SIZE))
+        self.page = max(1, min(self.page, self.pages))
+        self._label.setText(f"Page {self.page} / {self.pages}")
+        self._prev.setEnabled(self.page > 1)
+        self._next.setEnabled(self.page < self.pages)
+        self._count.setText(
+            f"{shown} {noun}(s) trouvé(s) sur {total}" if searching else f"{total} {noun}(s)"
+        )
+
+    def slice(self, rows: list) -> list:
+        start = (self.page - 1) * PAGE_SIZE
+        return rows[start:start + PAGE_SIZE]
+
+
 class _DetailPanel(QWidget):
     def __init__(self, mode: ContactMode = "resellers") -> None:
         super().__init__()
         self._mode = mode
         self._refresh_cb = None
         self._global_refresh_cb = None
+        self._all_mvt: list = []
+        self._all_pay: list = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(0)
@@ -464,8 +580,18 @@ class _DetailPanel(QWidget):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(0)
 
-        self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(["Date", "Pièce", "Type", "Qté", "Prix unit.", "Total", "", ""])
+        self._mvt_search = _search_box(
+            "Rechercher : produit, référence ou date (ex. 06/11)", self._on_mvt_search
+        )
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(12, 8, 12, 6)
+        search_row.addWidget(self._mvt_search)
+        vl.addLayout(search_row)
+
+        self._table = QTableWidget(0, 9)
+        self._table.setHorizontalHeaderLabels(
+            ["Date", "Référence", "Produit", "Type", "Qté", "Prix unit.", "Total", "", ""]
+        )
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
@@ -474,26 +600,26 @@ class _DetailPanel(QWidget):
         self._table.verticalHeader().setDefaultSectionSize(36)
         self._table.setFrameShape(QFrame.Shape.NoFrame)
         h = self._table.horizontalHeader()
-        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        for column in (0, 1, 3, 4, 5, 6):
+            h.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)
         h.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        right_align_headers(self._table, (4, 5))  # Prix unit., Total
-        self._table.setColumnWidth(6, 36)
+        right_align_headers(self._table, (5, 6))  # Prix unit., Total
         self._table.setColumnWidth(7, 36)
+        self._table.setColumnWidth(8, 36)
 
         self._mvt_empty = QLabel("Aucun mouvement pour ce contact.")
         self._mvt_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._mvt_empty.setStyleSheet("color: #9ca3af; font-size: 12px; padding: 20px;")
         self._mvt_empty.setVisible(False)
 
+        self._mvt_pager = _Pager(self._render_movements)
+
         vl.addWidget(self._table)
         vl.addWidget(self._mvt_empty)
+        vl.addWidget(self._mvt_pager)
         return w
 
     def _build_payments_table(self) -> QWidget:
@@ -501,6 +627,14 @@ class _DetailPanel(QWidget):
         vl = QVBoxLayout(w)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(0)
+
+        self._pay_search = _search_box(
+            "Rechercher : date (ex. 06/11), montant ou note", self._on_pay_search
+        )
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(12, 8, 12, 6)
+        search_row.addWidget(self._pay_search)
+        vl.addLayout(search_row)
 
         self._pay_table = QTableWidget(0, 6)
         self._pay_table.setHorizontalHeaderLabels(
@@ -528,12 +662,18 @@ class _DetailPanel(QWidget):
         self._pay_empty.setStyleSheet("color: #9ca3af; font-size: 12px; padding: 20px;")
         self._pay_empty.setVisible(False)
 
+        self._pay_pager = _Pager(self._render_payments)
+
         vl.addWidget(self._pay_table)
         vl.addWidget(self._pay_empty)
+        vl.addWidget(self._pay_pager)
         return w
 
     def load(self, contact_name: str, mvt_rows: list, pay_rows: list,
-             balance: int = 0, refresh_cb=None, global_refresh_cb=None) -> None:
+             balance: int = 0, refresh_cb=None, global_refresh_cb=None,
+             new_contact: bool = False) -> None:
+        """`new_contact` : autre contact sélectionné → recherches vidées et
+        retour à la page 1 (un simple rafraîchissement les garde)."""
         self._refresh_cb = refresh_cb
         self._global_refresh_cb = global_refresh_cb
         self._header.setText(f"Historique — {contact_name}  ({len(mvt_rows)} mouvement(s))")
@@ -546,31 +686,70 @@ class _DetailPanel(QWidget):
             f"border-radius: 10px; background: #f1f5f9; color: {color};"
         )
 
-        # Mouvements
-        self._table.setRowCount(len(mvt_rows))
-        has_mvt = bool(mvt_rows)
+        self._all_mvt = mvt_rows
+        self._all_pay = pay_rows
+        if new_contact:
+            for box in (self._mvt_search, self._pay_search):
+                box.blockSignals(True)
+                box.clear()
+                box.blockSignals(False)
+            self._mvt_pager.page = self._pay_pager.page = 1
+        self._render_movements()
+        self._render_payments()
+
+        if pay_rows:
+            self._tabs.setTabText(1, f"Versements ({len(pay_rows)})")
+        else:
+            self._tabs.setTabText(1, "Versements")
+
+    # -- Recherche et pages ---------------------------------------------
+
+    def _on_mvt_search(self) -> None:
+        self._mvt_pager.page = 1
+        self._render_movements()
+
+    def _on_pay_search(self) -> None:
+        self._pay_pager.page = 1
+        self._render_payments()
+
+    def _render_movements(self) -> None:
+        query = self._mvt_search.text()
+        # ligne : (date, réf, produit, type, qté, prix, total, lot, id, vente, texte de recherche)
+        rows = [r for r in self._all_mvt if matches(query, r[-1])]
+        self._mvt_pager.update_state(len(rows), len(self._all_mvt), "mouvement", bool(query.strip()))
+        page_rows = self._mvt_pager.slice(rows)
+
+        self._table.setRowCount(0)  # retire aussi les boutons des lignes précédentes
+        self._table.setRowCount(len(page_rows))
+        has_mvt = bool(page_rows)
         self._table.setVisible(has_mvt)
         self._mvt_empty.setVisible(not has_mvt)
-        for i, (date, ref, type_, qty, price, total, batch_id, movement_id, is_sale) in enumerate(mvt_rows):
+        self._mvt_empty.setText(
+            "Aucun mouvement ne correspond à la recherche." if self._all_mvt
+            else "Aucun mouvement pour ce contact."
+        )
+        for i, (date, ref, product, type_, qty, price, total, batch_id, movement_id, is_sale, _text) \
+                in enumerate(page_rows):
             self._table.setItem(i, 0, QTableWidgetItem(date))
             self._table.setItem(i, 1, QTableWidgetItem(ref))
+            self._table.setItem(i, 2, QTableWidgetItem(product))
             type_item = QTableWidgetItem(type_)
             type_item.setForeground(Qt.GlobalColor.darkGreen if type_ == "Entrée" else Qt.GlobalColor.red)
-            self._table.setItem(i, 2, type_item)
-            self._table.setItem(i, 3, QTableWidgetItem(str(qty)))
+            self._table.setItem(i, 3, type_item)
+            self._table.setItem(i, 4, QTableWidgetItem(str(qty)))
             price_item = QTableWidgetItem(price)
             price_item.setTextAlignment(ALIGN_RIGHT)
-            self._table.setItem(i, 4, price_item)
+            self._table.setItem(i, 5, price_item)
             total_item = QTableWidgetItem(total)
-            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(i, 5, total_item)
+            total_item.setTextAlignment(ALIGN_RIGHT)
+            self._table.setItem(i, 6, total_item)
 
             edit_btn = QPushButton("✏")
             edit_btn.setObjectName("IconButton")
             edit_btn.setFixedSize(28, 28)
             edit_btn.setStyleSheet("padding: 0; font-size: 12px;")
             edit_btn.clicked.connect(lambda _c, bid=batch_id, mid=movement_id: self._on_edit(bid, mid))
-            self._table.setCellWidget(i, 6, edit_btn)
+            self._table.setCellWidget(i, 7, edit_btn)
 
             if is_sale:
                 print_btn = QPushButton("🖨")
@@ -580,18 +759,27 @@ class _DetailPanel(QWidget):
                 print_btn.clicked.connect(
                     lambda _c, bid=batch_id, mid=movement_id: self._on_print(bid, mid)
                 )
-                self._table.setCellWidget(i, 7, print_btn)
+                self._table.setCellWidget(i, 8, print_btn)
 
-        # Versements
-        self._pay_table.setRowCount(len(pay_rows))
-        has_pay = bool(pay_rows)
+    def _render_payments(self) -> None:
+        query = self._pay_search.text()
+        rows = [r for r in self._all_pay if matches(query, *r)]
+        self._pay_pager.update_state(len(rows), len(self._all_pay), "versement", bool(query.strip()))
+        page_rows = self._pay_pager.slice(rows)
+
+        self._pay_table.setRowCount(len(page_rows))
+        has_pay = bool(page_rows)
         self._pay_table.setVisible(has_pay)
         self._pay_empty.setVisible(not has_pay)
-        for i, (date, amount, bal_before, bal_after, note, cashier) in enumerate(pay_rows):
+        self._pay_empty.setText(
+            "Aucun versement ne correspond à la recherche." if self._all_pay
+            else "Aucun versement enregistré."
+        )
+        for i, (date, amount, bal_before, bal_after, note, cashier) in enumerate(page_rows):
             self._pay_table.setItem(i, 0, QTableWidgetItem(date))
             amt_item = QTableWidgetItem(amount)
             amt_item.setForeground(Qt.GlobalColor.darkGreen)
-            amt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            amt_item.setTextAlignment(ALIGN_RIGHT)
             self._pay_table.setItem(i, 1, amt_item)
             for column, balance in ((2, bal_before), (3, bal_after)):
                 balance_item = QTableWidgetItem(balance)
@@ -599,11 +787,6 @@ class _DetailPanel(QWidget):
                 self._pay_table.setItem(i, column, balance_item)
             self._pay_table.setItem(i, 4, QTableWidgetItem(note))
             self._pay_table.setItem(i, 5, QTableWidgetItem(cashier))
-
-        if pay_rows:
-            self._tabs.setTabText(1, f"Versements ({len(pay_rows)})")
-        else:
-            self._tabs.setTabText(1, "Versements")
 
     def _on_print(self, batch_id, movement_id) -> None:
         from app.ui.ticket_dialog import TicketPreviewDialog
@@ -623,12 +806,16 @@ class _DetailPanel(QWidget):
         self._refresh_cb = None
         self._header.setText("Sélectionnez un contact pour voir ses mouvements")
         self._balance_badge.setText("")
+        self._all_mvt = []
+        self._all_pay = []
         self._table.setRowCount(0)
         self._table.setVisible(True)
         self._mvt_empty.setVisible(False)
         self._pay_table.setRowCount(0)
         self._pay_table.setVisible(True)
         self._pay_empty.setVisible(False)
+        self._mvt_pager.update_state(0, 0, "mouvement", False)
+        self._pay_pager.update_state(0, 0, "versement", False)
 
 
 # ---------------------------------------------------------------------------
