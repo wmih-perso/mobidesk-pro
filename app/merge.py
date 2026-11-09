@@ -132,8 +132,8 @@ def merge_displays(session: Session, keep_id: int, drop_id: int) -> Display:
 
     keep.quantity += drop.quantity
     keep.min_stock = max(keep.min_stock, drop.min_stock)
-    if not (keep.location_kind or keep.location_number):
-        keep.location_kind, keep.location_number = drop.location_kind, drop.location_number
+    if not keep.location_number:
+        keep.location_number = drop.location_number
     keep.aliases = _append_lines(
         keep.aliases, drop.reference, drop.phone_model, *(drop.aliases or "").splitlines()
     )

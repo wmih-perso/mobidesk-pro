@@ -12,6 +12,7 @@ from typing import Literal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.locations import normalize_location
 from app.models import Category, Display, Expense, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, SupplierPayment, User
 
 SalePriceType = Literal["retail", "wholesale"]
@@ -117,8 +118,7 @@ def create_display(
     quantity: int,
     min_stock: int,
     notes: str = "",
-    location_kind: str = "",
-    location_number: str = "",
+    location: str = "",
 ) -> Display:
     reference = reference.strip()
     _validate_display_fields(reference, quantity, min_stock)
@@ -139,8 +139,7 @@ def create_display(
         quantity=quantity,
         min_stock=min_stock,
         notes=notes.strip(),
-        location_kind=location_kind.strip(),
-        location_number=location_number.strip(),
+        location_number=normalize_location(location),
     )
     session.add(display)
     session.flush()
@@ -184,11 +183,10 @@ def update_display(
     sale_price_wholesale_cents: int,
     min_stock: int,
     notes: str = "",
-    location_kind: str | None = None,
-    location_number: str | None = None,
+    location: str | None = None,
 ) -> Display:
     """Modifie les informations d'une pièce (hors quantité — voir adjust_stock).
-    Emplacement inchangé si `location_kind` / `location_number` valent None."""
+    Emplacement inchangé si `location` vaut None."""
     display = get_display(session, display_id)
     reference = reference.strip()
     _validate_display_fields(reference, display.quantity, min_stock)
@@ -209,10 +207,9 @@ def update_display(
     display.sale_price_wholesale_cents = sale_price_wholesale_cents
     display.min_stock = min_stock
     display.notes = notes.strip()
-    if location_kind is not None:
-        display.location_kind = location_kind.strip()
-    if location_number is not None:
-        display.location_number = location_number.strip()
+    if location is not None:
+        display.location_number = normalize_location(location)
+        display.location_kind = ""  # ancien type de rangement (v2.4.19), plus utilisé
     session.flush()
     return display
 

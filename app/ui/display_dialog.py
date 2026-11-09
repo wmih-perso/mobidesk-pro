@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 
 from app.database import session_scope
 from app.models import Display
-from app.locations import LOCATION_KINDS, suggested_kind
 from app.merge import list_lots
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import (
@@ -58,6 +57,7 @@ class DisplayDialog(FramelessDialog):
         self._build_ui()
         if display_id is not None:
             self._load_display(display_id)
+        self.location_input.setFocus()  # premier champ : l'emplacement
 
     # ------------------------------------------------------------------
     # Construction UI
@@ -114,6 +114,17 @@ class DisplayDialog(FramelessDialog):
         grid.setColumnMinimumWidth(1, 24)
 
         row = 0
+
+        # Emplacement en premier : où est rangée la pièce (B32, C5, T2…).
+        grid.addWidget(_field_label("Emplacement"), row, 0)
+        row += 1
+        self.location_input = QLineEdit()
+        self.location_input.setPlaceholderText("Ex : B32")
+        self.location_input.setMaxLength(10)
+        self._style_input(self.location_input)
+        self.location_input.textEdited.connect(self._on_location_edited)
+        grid.addWidget(self.location_input, row, 0)
+        row += 1
 
         grid.addWidget(_field_label("Référence produit"), row, 0)
         grid.addWidget(_field_label("Désignation (modèle compatible)"), row, 2)
@@ -225,29 +236,6 @@ class DisplayDialog(FramelessDialog):
         self.sale_price_wholesale_input.setDecimals(0)
         self.sale_price_wholesale_input.setSuffix(" DA")
         grid.addWidget(self.sale_price_wholesale_input, row, 2)
-        row += 1
-
-        grid.addWidget(_field_label("Emplacement (où est rangée la pièce)"), row, 0, 1, 3)
-        row += 1
-
-        location_row = QHBoxLayout()
-        location_row.setSpacing(8)
-        self.location_kind_input = QComboBox()
-        self.location_kind_input.addItem("—", "")
-        for kind, _short in LOCATION_KINDS:
-            self.location_kind_input.addItem(kind, kind)
-        self._style_combo(self.location_kind_input)
-        self.location_kind_input.setMinimumWidth(170)
-        location_row.addWidget(self.location_kind_input)
-        location_row.addWidget(QLabel("N°"))
-        self.location_number_input = QLineEdit()
-        self.location_number_input.setPlaceholderText("Ex : 7")
-        self.location_number_input.setMaxLength(10)
-        self._style_input(self.location_number_input)
-        self.location_number_input.setMaximumWidth(120)
-        location_row.addWidget(self.location_number_input)
-        location_row.addStretch()
-        grid.addLayout(location_row, row, 0, 1, 3)
         row += 1
 
         grid.addWidget(_field_label("Notes"), row, 0, 1, 3)
@@ -381,12 +369,14 @@ class DisplayDialog(FramelessDialog):
         self.category_search.setText(item.text())
         self.category_search.blockSignals(False)
         self.category_list.setVisible(False)
-        # Type de rangement proposé selon la catégorie (Boîte pour un
-        # afficheur, Tiroir pour une nappe…), s'il n'est pas déjà choisi.
-        if not self.location_kind_input.currentData():
-            suggestion = suggested_kind(item.text())
-            if suggestion:
-                self.location_kind_input.setCurrentIndex(self.location_kind_input.findData(suggestion))
+
+    def _on_location_edited(self, text: str) -> None:
+        """Majuscules à la frappe (b32 → B32), curseur gardé en place."""
+        upper = text.upper()
+        if upper != text:
+            cursor = self.location_input.cursorPosition()
+            self.location_input.setText(upper)
+            self.location_input.setCursorPosition(cursor)
 
     def _load_display(self, display_id: int) -> None:
         with session_scope() as session:
@@ -404,12 +394,7 @@ class DisplayDialog(FramelessDialog):
             self.sale_price_wholesale_input.setValue(cents_to_da(display.sale_price_wholesale_cents))
             self.min_stock_input.setValue(display.min_stock)
             self.notes_input.setPlainText(display.notes)
-            kind_index = self.location_kind_input.findData(display.location_kind or "")
-            if kind_index < 0 and display.location_kind:
-                self.location_kind_input.addItem(display.location_kind, display.location_kind)
-                kind_index = self.location_kind_input.count() - 1
-            self.location_kind_input.setCurrentIndex(max(kind_index, 0))
-            self.location_number_input.setText(display.location_number or "")
+            self.location_input.setText(display.location_number or "")
             lots = list_lots(session, display_id)
             aliases = [a for a in (display.aliases or "").splitlines() if a.strip()]
 
@@ -440,8 +425,7 @@ class DisplayDialog(FramelessDialog):
             sale_price_wholesale_cents=da_to_cents(self.sale_price_wholesale_input.value()),
             min_stock=self.min_stock_input.value(),
             notes=self.notes_input.toPlainText(),
-            location_kind=self.location_kind_input.currentData() or "",
-            location_number=self.location_number_input.text(),
+            location=self.location_input.text(),
         )
 
     def _save(self) -> bool:
@@ -485,11 +469,10 @@ class DisplayDialog(FramelessDialog):
         self.sale_price_wholesale_input.setValue(0)
         self.min_stock_input.setValue(1)
         self.notes_input.clear()
-        self.location_kind_input.setCurrentIndex(0)
-        self.location_number_input.clear()
+        self.location_input.clear()
         if self.quantity_input is not None:
             self.quantity_input.setValue(0)
-        self.reference_input.setFocus()
+        self.location_input.setFocus()
         self.category_search.clear()
         self.category_list.setVisible(False)
 

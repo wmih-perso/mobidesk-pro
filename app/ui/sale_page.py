@@ -386,7 +386,7 @@ class SalePage(QWidget):
             self._aliases_by_id = {d.id: d.aliases for d in displays if d.aliases}
             # Emplacement (Boîte 7…) : affiché, jamais utilisé par la recherche.
             self._location_by_id = {
-                d.id: location_label(d.location_kind, d.location_number) for d in displays
+                d.id: location_label(d.location_number) for d in displays
             }
             self._brand_words = brand_words(d.brand for d in displays if d.brand)
             resellers = list_resellers(session)

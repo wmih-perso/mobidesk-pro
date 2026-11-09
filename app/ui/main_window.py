@@ -127,7 +127,7 @@ CATEGORY_COLUMN = DISPLAY_COLUMNS.index("Catégorie")
 # Colonnes qu'un clic sur le titre permet de classer -> clé de tri.
 LOCATION_COLUMN = DISPLAY_COLUMNS.index("Emplacement")
 SORTABLE_COLUMNS = {
-    LOCATION_COLUMN: lambda d: location_sort_key(d.location_kind, d.location_number),
+    LOCATION_COLUMN: lambda d: location_sort_key(d.location_number),
     CATEGORY_COLUMN: lambda d: (d.category or "").lower(),
     DISPLAY_COLUMNS.index("Quantité"): lambda d: d.quantity,
 }
@@ -1591,7 +1591,7 @@ class MainWindow(QMainWindow):
         self.displays_table.setRowCount(len(page_items))
         for row_index, d in enumerate(page_items):
             values = [
-                location_label(d.location_kind, d.location_number),
+                location_label(d.location_number),
                 d.reference,
                 d.category,
                 d.brand,
@@ -1923,7 +1923,7 @@ class MainWindow(QMainWindow):
                 for d in self._filtered_displays:
                     writer.writerow(
                         [
-                            location_label(d.location_kind, d.location_number),
+                            location_label(d.location_number),
                             d.reference,
                             d.category,
                             d.brand,
