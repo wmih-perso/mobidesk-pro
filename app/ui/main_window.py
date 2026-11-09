@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import session_scope
+from app.locations import location_label, location_sort_key
 from app.money import cents_to_da, format_da
 from app.paths import get_database_path, is_frozen
 from app.services import (
@@ -104,6 +105,7 @@ class _UpdateCheckThread(QThread):
             self.found.emit(info)
 
 DISPLAY_COLUMNS = [
+    "Emplacement",
     "Référence",
     "Catégorie",
     "Marque",
@@ -123,7 +125,9 @@ DISPLAY_COLUMNS = [
 # titre court ne sert qu'à l'écran ; l'export CSV garde DISPLAY_COLUMNS.
 CATEGORY_COLUMN = DISPLAY_COLUMNS.index("Catégorie")
 # Colonnes qu'un clic sur le titre permet de classer -> clé de tri.
+LOCATION_COLUMN = DISPLAY_COLUMNS.index("Emplacement")
 SORTABLE_COLUMNS = {
+    LOCATION_COLUMN: lambda d: location_sort_key(d.location_kind, d.location_number),
     CATEGORY_COLUMN: lambda d: (d.category or "").lower(),
     DISPLAY_COLUMNS.index("Quantité"): lambda d: d.quantity,
 }
@@ -612,6 +616,9 @@ class MainWindow(QMainWindow):
         )
         self.displays_table.horizontalHeader().setSectionResizeMode(
             action_column_index, QHeaderView.ResizeMode.Fixed
+        )
+        self.displays_table.horizontalHeader().setSectionResizeMode(
+            LOCATION_COLUMN, QHeaderView.ResizeMode.ResizeToContents
         )
         self.displays_table.setColumnWidth(alert_column_index, 120)
         self.displays_table.setColumnWidth(action_column_index, 96)
@@ -1584,6 +1591,7 @@ class MainWindow(QMainWindow):
         self.displays_table.setRowCount(len(page_items))
         for row_index, d in enumerate(page_items):
             values = [
+                location_label(d.location_kind, d.location_number),
                 d.reference,
                 d.category,
                 d.brand,
@@ -1915,6 +1923,7 @@ class MainWindow(QMainWindow):
                 for d in self._filtered_displays:
                     writer.writerow(
                         [
+                            location_label(d.location_kind, d.location_number),
                             d.reference,
                             d.category,
                             d.brand,

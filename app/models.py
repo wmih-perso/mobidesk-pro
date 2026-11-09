@@ -63,6 +63,11 @@ class Display(Base):
     # Références et modèles des produits fusionnés dans celui-ci (un par
     # ligne) — pour que la recherche retrouve encore l'ancienne référence.
     aliases: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Emplacement physique de la pièce : type de rangement (Boîte,
+    # Compartiment, Tiroir, Chariot) + numéro. Jamais utilisé par la
+    # recherche (voir app/locations.py).
+    location_kind: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    location_number: Mapped[str] = mapped_column(String(10), default="", server_default="")
     is_active: Mapped[bool] = mapped_column(default=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now)

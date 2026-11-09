@@ -39,6 +39,7 @@ from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
+from app.locations import location_label
 from app.search import brand_words, filter_and_rank
 
 MONTH_NAMES_FR = [
@@ -356,6 +357,7 @@ class SalePage(QWidget):
         ] = []
         self._display_choices: list[tuple[int, str, str, str, int, int, int]] = []
         self._models_by_id: dict[int, list[str]] = {}  # modèles compatibles par produit
+        self._location_by_id: dict[int, str] = {}  # emplacement affiché par produit
         self._aliases_by_id: dict[int, str] = {}  # anciennes références (produits fusionnés)
         self._carts: list[dict] = [_empty_cart()]
         self._current = 0
@@ -382,6 +384,10 @@ class SalePage(QWidget):
             ]
             self._models_by_id = {d.id: split_models(d.phone_model) for d in displays}
             self._aliases_by_id = {d.id: d.aliases for d in displays if d.aliases}
+            # Emplacement (Boîte 7…) : affiché, jamais utilisé par la recherche.
+            self._location_by_id = {
+                d.id: location_label(d.location_kind, d.location_number) for d in displays
+            }
             self._brand_words = brand_words(d.brand for d in displays if d.brand)
             resellers = list_resellers(session)
 
@@ -591,10 +597,10 @@ class SalePage(QWidget):
         self.search_results.setFixedHeight(row_height * SEARCH_VISIBLE_ROWS + 2 * self.search_results.frameWidth())
         bl.addWidget(self.search_results)
 
-        # Tableau — 7 colonnes
-        self.lines_table = QTableWidget(0, 8)
+        # Tableau — 8 colonnes + ×
+        self.lines_table = QTableWidget(0, 9)
         self.lines_table.setHorizontalHeaderLabels(
-            ["Référence", "Modèle", "Stock", "Désignation", "Prix U.", "Qté", "Montant", ""]
+            ["Emplacement", "Référence", "Modèle", "Stock", "Désignation", "Prix U.", "Qté", "Montant", ""]
         )
         self.lines_table.setStyleSheet(
             "QTableWidget { background: white; border: 1px solid #e0e0e0; border-radius: 8px; "
@@ -607,21 +613,23 @@ class SalePage(QWidget):
             "QTableWidget::item:hover { background: #eff6ff; }"
         )
         hdr = self.lines_table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Référence
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   # Modèle
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)   # Stock
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch) # Désignation
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)   # Prix U.
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # Qté
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)   # Montant
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)   # ×
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Emplacement
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   # Référence
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)   # Modèle
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)   # Stock
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) # Désignation
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # Prix U.
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)   # Qté
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)   # Montant
+        hdr.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)   # ×
         self.lines_table.setColumnWidth(0, 110)
-        self.lines_table.setColumnWidth(1, 120)
-        self.lines_table.setColumnWidth(2, 60)
-        self.lines_table.setColumnWidth(4, 160)
-        self.lines_table.setColumnWidth(5, 130)
-        self.lines_table.setColumnWidth(6, 140)
-        self.lines_table.setColumnWidth(7, 46)
+        self.lines_table.setColumnWidth(1, 110)
+        self.lines_table.setColumnWidth(2, 120)
+        self.lines_table.setColumnWidth(3, 60)
+        self.lines_table.setColumnWidth(5, 160)
+        self.lines_table.setColumnWidth(6, 130)
+        self.lines_table.setColumnWidth(7, 140)
+        self.lines_table.setColumnWidth(8, 46)
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.verticalHeader().setDefaultSectionSize(48)
         self.lines_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -723,7 +731,9 @@ class SalePage(QWidget):
             return
         for d_id, ref, label, cat, ret, who, qs in matches:
             parts = [p for p in [cat, label] if p]  # sans la référence
-            item = QListWidgetItem("  ·  ".join(parts))
+            location = self._location_by_id.get(d_id, "")
+            text = "  ·  ".join(parts) + (f"     📦 {location}" if location else "")
+            item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, (d_id, ref, label, cat, ret, who, qs))
             item.setData(_RESULT_INFO_ROLE, (qs, who))  # stock, prix gros
             self.search_results.addItem(item)
@@ -771,13 +781,19 @@ class SalePage(QWidget):
         row = self.lines_table.rowCount()
         self.lines_table.insertRow(row)
 
-        # Col 0 — Référence
+        # Col 0 — Emplacement (où prendre la pièce)
+        location_item = QTableWidgetItem(self._location_by_id.get(display_id, ""))
+        location_item.setFlags(location_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        location_item.setForeground(QColor("#92400e"))
+        self.lines_table.setItem(row, 0, location_item)
+
+        # Col 1 — Référence
         ref_item = QTableWidgetItem(ref)
         ref_item.setFlags(ref_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         ref_item.setForeground(Qt.GlobalColor.darkGray)
-        self.lines_table.setItem(row, 0, ref_item)
+        self.lines_table.setItem(row, 1, ref_item)
 
-        # Col 1 — Modèle compatible (liste des modèles du produit)
+        # Col 2 — Modèle compatible (liste des modèles du produit)
         model_combo = QComboBox()
         models = self._models_by_id.get(display_id, [])
         if len(models) != 1:
@@ -787,9 +803,9 @@ class SalePage(QWidget):
         model_combo.setFixedHeight(34)
         model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         model_combo.currentIndexChanged.connect(self._on_cart_changed)
-        self.lines_table.setCellWidget(row, 1, _spin_cell(model_combo))
+        self.lines_table.setCellWidget(row, 2, _spin_cell(model_combo))
 
-        # Col 2 — Stock
+        # Col 3 — Stock
         stock_item = QTableWidgetItem(str(qty_stock))
         stock_item.setFlags(stock_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -801,15 +817,15 @@ class SalePage(QWidget):
             stock_item.setBackground(QColor("#fffbeb"))
         else:
             stock_item.setForeground(QColor("#16a34a"))
-        self.lines_table.setItem(row, 2, stock_item)
+        self.lines_table.setItem(row, 3, stock_item)
 
-        # Col 3 — Désignation
+        # Col 4 — Désignation
         desc = f"{label or ref}  ·  {category}" if category else (label or ref)
         desc_item = QTableWidgetItem(desc)
         desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.lines_table.setItem(row, 3, desc_item)
+        self.lines_table.setItem(row, 4, desc_item)
 
-        # Col 4 — Prix U.
+        # Col 5 — Prix U.
         price_spin = ModernDoubleSpinBox()
         price_spin.setRange(0, 99_999_999)
         price_spin.setDecimals(0)
@@ -818,24 +834,24 @@ class SalePage(QWidget):
         price_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         price_spin.setValue(cents_to_da(base_price))
         price_spin.valueChanged.connect(self._update_total)
-        self.lines_table.setCellWidget(row, 4, _spin_cell(price_spin))
+        self.lines_table.setCellWidget(row, 5, _spin_cell(price_spin))
 
-        # Col 5 — Qté
+        # Col 6 — Qté
         qty_spin = ModernSpinBox()
         qty_spin.setRange(1, 1_000_000)
         qty_spin.setFixedHeight(34)
         qty_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         qty_spin.valueChanged.connect(self._update_total)
-        self.lines_table.setCellWidget(row, 5, _spin_cell(qty_spin))
+        self.lines_table.setCellWidget(row, 6, _spin_cell(qty_spin))
 
-        # Col 6 — Montant
+        # Col 7 — Montant
         total_item = QTableWidgetItem(format_da(base_price))
         total_item.setFlags(total_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         total_item.setForeground(Qt.GlobalColor.darkGray)
-        self.lines_table.setItem(row, 6, total_item)
+        self.lines_table.setItem(row, 7, total_item)
 
-        # Col 7 — ×
+        # Col 8 — ×
         remove_btn = QPushButton("×")
         remove_btn.setFixedSize(28, 28)
         remove_btn.setStyleSheet(
@@ -845,7 +861,7 @@ class SalePage(QWidget):
         )
         remove_btn.setToolTip("Supprimer")
         remove_btn.clicked.connect(lambda: self._remove_line_row(qty_spin))
-        self.lines_table.setCellWidget(row, 7, _centered(remove_btn))
+        self.lines_table.setCellWidget(row, 8, _centered(remove_btn))
 
         self._line_rows.append(
             (display_id, retail_cents, wholesale_cents, qty_spin, price_spin, model_combo)
@@ -872,7 +888,7 @@ class SalePage(QWidget):
         for i, (_d_id, _ret, _who, qty_spin, price_spin, _model) in enumerate(self._line_rows):
             line_total = da_to_cents(price_spin.value()) * qty_spin.value()
             subtotal += line_total
-            item = self.lines_table.item(i, 6)
+            item = self.lines_table.item(i, 7)
             if item:
                 item.setText(format_da(line_total))
         remise = min(da_to_cents(self.remise_spin.value()), subtotal)

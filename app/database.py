@@ -99,6 +99,12 @@ def _migrate_displays_schema(engine) -> None:
                 "ALTER TABLE displays ADD COLUMN aliases TEXT NOT NULL DEFAULT ''"
             )
 
+        for column in ("location_kind", "location_number"):
+            if column not in existing:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE displays ADD COLUMN {column} VARCHAR(20) NOT NULL DEFAULT ''"
+                )
+
         if "category" not in existing:
             connection.exec_driver_sql(
                 "ALTER TABLE displays ADD COLUMN category VARCHAR(50) NOT NULL DEFAULT 'Afficheur'"
