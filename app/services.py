@@ -246,6 +246,7 @@ def adjust_stock(
     invoice_number: str = "",
     model_label: str = "",
     lot_wholesale_cents: int | None = None,
+    unit_list_price_cents: int | None = None,
 ) -> Display:
     """Ajoute ou retire une quantité du stock d'une pièce.
 
@@ -368,6 +369,11 @@ def adjust_stock(
         cashier_name=cashier_name,
         invoice_number=invoice_number.strip(),
         model_label=model_label.strip(),
+        # Prix avant remise (ticket) ; sans remise, c'est le prix de vente.
+        unit_list_price_cents=(
+            (unit_list_price_cents if unit_list_price_cents is not None else unit_sale_price_cents)
+            if is_sale else 0
+        ),
     )
     session.add(movement)
     session.flush()
@@ -499,7 +505,7 @@ def apply_stock_batch(
     transaction atomique. Si `versement_cents` est fourni pour une vente
     revendeur, met à jour le solde du revendeur et annote les mouvements.
     Chaque ligne est (display_id, quantité, prix) ou, en option,
-    (display_id, quantité, prix, modèle choisi) pour une vente, et
+    (display_id, quantité, prix, modèle choisi[, prix avant remise]) pour une vente, et
     (display_id, quantité, prix d'achat, prix gros du lot) pour une entrée.
     """
     if not lines:
@@ -523,6 +529,7 @@ def apply_stock_batch(
             invoice_number=invoice_number,
             model_label=(extra[0] if extra else "") if is_sale else "",
             lot_wholesale_cents=(extra[0] if extra and not is_sale else None),
+            unit_list_price_cents=(extra[1] if is_sale and len(extra) > 1 else None),
         )
         results.append(display)
 
@@ -647,7 +654,7 @@ def edit_movement_batch(
     *,
     batch_id: int | None = None,
     movement_id: int | None = None,
-    lines: list[tuple[int, int, int]],
+    lines: list[tuple],
 ) -> None:
     """Modifie EN PLACE une opération (achat, vente ou ajustement).
 
@@ -668,7 +675,10 @@ def edit_movement_batch(
     first = movements[0]
     is_entry = first.change_quantity > 0
     wanted: dict[int, tuple[int, int]] = {}
-    for display_id, quantity, price in lines:
+    list_prices: dict[int, int] = {}
+    for display_id, quantity, price, *extra in lines:
+        if extra and extra[0] is not None:
+            list_prices[display_id] = extra[0]
         if quantity <= 0:
             raise StockError("La quantité de chaque produit doit être positive.")
         if price < 0:
@@ -690,6 +700,8 @@ def edit_movement_batch(
             _edit_entry(session, m, new_qty, new_price)
         else:
             _edit_exit(session, m, new_qty, new_price)
+            if new_qty and m.is_sale and m.display_id in list_prices:
+                m.unit_list_price_cents = list_prices[m.display_id]
         if new_qty:
             new_total += line_total(m)
 
@@ -713,6 +725,7 @@ def edit_movement_batch(
             reseller_id=first.reseller_id,
             movement_batch_id=first.movement_batch_id,
             invoice_number=first.invoice_number,
+            unit_list_price_cents=list_prices.get(display_id),
         )
         added = session.scalars(
             select(StockMovement).where(StockMovement.display_id == display_id)

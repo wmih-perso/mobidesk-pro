@@ -51,6 +51,10 @@ class MovementEditDialog(FramelessDialog):
         self._reseller_id: int | None = None
         self._reason: str = ""
         self._show_price: bool = False
+        # Vente avec remise (v2.4.23+) : on modifie les prix AVANT remise et
+        # la même remise (montant) est réappliquée à l'enregistrement.
+        self._remise_cents: int = 0
+        self._uses_list_price: bool = False
 
         self._load_batch_info()
         self._build_ui()
@@ -85,6 +89,11 @@ class MovementEditDialog(FramelessDialog):
             self._reseller_id = first.reseller_id
             self._reason = first.reason
             self._show_price = True  # toujours afficher le prix en mode édition
+            self._remise_cents = first.remise_cents or 0
+            self._uses_list_price = (
+                self._is_sale and self._remise_cents > 0
+                and all(m.unit_list_price_cents for m in movements)
+            )
 
             self._initial_lines: list[tuple[int, str, int, int]] = []
             for m in movements:
@@ -95,7 +104,7 @@ class MovementEditDialog(FramelessDialog):
                 price = (
                     m.unit_purchase_price_cents
                     if self._direction == 1
-                    else m.unit_sale_price_cents
+                    else (m.unit_list_price_cents if self._uses_list_price else m.unit_sale_price_cents)
                 )
                 qty = abs(m.change_quantity)
                 self._initial_lines.append((m.display_id, label, qty, price))
@@ -145,6 +154,13 @@ class MovementEditDialog(FramelessDialog):
         info = QLabel(f"{lot_ref}  —  Motif : {self._reason}")
         info.setStyleSheet("color: #64748b; font-size: 12px;")
         layout.addWidget(info)
+        if self._uses_list_price:
+            remise = QLabel(
+                f"Prix avant remise. La remise de {format_da(self._remise_cents)} "
+                "sera réappliquée sur le nouveau total."
+            )
+            remise.setStyleSheet("color: #b45309; font-size: 12px; font-weight: 600;")
+            layout.addWidget(remise)
 
         # Barre de recherche pour ajouter un produit
         search_label = QLabel("Ajouter un produit :")
@@ -324,6 +340,14 @@ class MovementEditDialog(FramelessDialog):
             (did, spin.value(), da_to_cents(price.value()))
             for did, spin, price in self._line_rows
         ]
+        if self._is_sale:
+            if self._uses_list_price:
+                # Même remise (montant) répartie sur les nouveaux prix.
+                gross = sum(qty * price for _d, qty, price in lines)
+                ratio = min(self._remise_cents / gross, 1.0) if gross > 0 else 0.0
+                lines = [(d, qty, round(price * (1 - ratio)), price) for d, qty, price in lines]
+            else:
+                lines = [(d, qty, price, price) for d, qty, price in lines]
 
         try:
             with session_scope() as session:

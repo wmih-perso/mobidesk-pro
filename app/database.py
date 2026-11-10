@@ -64,6 +64,7 @@ def _migrate_stock_movements_schema(engine) -> None:
             "return_id": "INTEGER",
             "invoice_number": "VARCHAR(50) NOT NULL DEFAULT ''",
             "model_label": "VARCHAR(150) NOT NULL DEFAULT ''",
+            "unit_list_price_cents": "INTEGER NOT NULL DEFAULT 0",
         }
 
         for column_name, ddl_type in columns_to_add.items():

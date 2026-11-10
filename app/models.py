@@ -166,6 +166,11 @@ class StockMovement(Base):
     # Modèle compatible choisi à la vente (ex. « 9A ») — vide si non précisé.
     model_label: Mapped[str] = mapped_column(String(150), default="", server_default="")
 
+    # Prix unitaire AVANT remise (affiché sur le ticket, la remise apparaît
+    # en bas). unit_sale_price_cents reste le prix après remise, qui sert aux
+    # bénéfices, dettes et retours. 0 pour les ventes d'avant la v2.4.23.
+    unit_list_price_cents: Mapped[int] = mapped_column(default=0, server_default="0")
+
     created_at: Mapped[datetime.datetime] = mapped_column(default=_now, index=True)
 
     @property

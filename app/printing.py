@@ -74,6 +74,7 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
         supplier_balance_before = movements[0].supplier_balance_before_cents if movements else 0
         has_supplier = bool(supplier_name) and supplier_versement > 0
 
+        net_total = 0
         for m in movements:
             display = session.get(Display, m.display_id)
             label = (
@@ -83,6 +84,11 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
             qty = abs(m.change_quantity)
             # Pour un achat fournisseur, le prix unitaire est le prix d'achat
             unit_cents = m.unit_sale_price_cents or m.unit_purchase_price_cents or 0
+            net_total += unit_cents * qty
+            # Vente avec remise (depuis la v2.4.23) : la ligne montre le prix
+            # avant remise ; la remise n'apparaît qu'en bas du ticket.
+            if m.is_sale and m.unit_list_price_cents:
+                unit_cents = m.unit_list_price_cents
             lines.append({
                 "label": label,
                 "category": display.category if display else "",
@@ -92,8 +98,11 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
                 "total_cents": unit_cents * qty,
             })
 
-        total_after_remise = sum(l["total_cents"] for l in lines)
-        total_brut = total_after_remise + remise_cents
+        total_after_remise = net_total
+        lines_total = sum(l["total_cents"] for l in lines)
+        # Lignes au prix avant remise : le TOTAL est leur somme ; sinon
+        # (anciens tickets), total après remise + remise.
+        total_brut = lines_total if lines_total != net_total else net_total + remise_cents
         new_balance = balance_before + total_after_remise - versement_cents if has_reseller else 0
         supplier_new_balance = (
             supplier_balance_before + total_after_remise - supplier_versement

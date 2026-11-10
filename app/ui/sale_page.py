@@ -1048,11 +1048,12 @@ class SalePage(QWidget):
         discount_ratio = remise_cents / subtotal_cents if subtotal_cents > 0 else 0.0
         lines = []
         for display_id, _ret, _who, qty_spin, price_spin, model_combo in self._line_rows:
-            unit_price = da_to_cents(price_spin.value())
+            list_price = da_to_cents(price_spin.value())  # prix affiché sur le ticket
+            unit_price = list_price
             if discount_ratio > 0:
                 unit_price = round(unit_price * (1 - discount_ratio))
             lines.append(
-                (display_id, qty_spin.value(), unit_price, model_combo.currentData() or "")
+                (display_id, qty_spin.value(), unit_price, model_combo.currentData() or "", list_price)
             )
 
         batch_id = None
