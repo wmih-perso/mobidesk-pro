@@ -13,7 +13,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.locations import normalize_location
-from app.models import Category, Display, Expense, Repair, RepairItem, Reseller, ResellerPayment, StockBatch, StockMovement, Supplier, SupplierPayment, User
+from app.models import (
+    Category, Display, Expense, LotAllocation, Repair, RepairItem, Reseller, ResellerPayment,
+    StockBatch, StockMovement, Supplier, SupplierPayment, User,
+)
 
 SalePriceType = Literal["retail", "wholesale"]
 
@@ -309,6 +312,7 @@ def adjust_stock(
         )
         total_cost = 0
         consumed = 0
+        allocations: list[tuple[StockBatch, int]] = []
         for batch in batches:
             if consumed >= qty_needed:
                 break
@@ -316,6 +320,7 @@ def adjust_stock(
             total_cost += take * batch.unit_purchase_price_cents
             batch.quantity_remaining -= take
             consumed += take
+            allocations.append((batch, take))
 
         fifo_purchase_price = (total_cost // consumed) if consumed > 0 else display.purchase_price_cents
 
@@ -333,28 +338,132 @@ def adjust_stock(
     cashier_name = _session.get_current_cashier_name() if is_sale else ""
 
     display.quantity = quantity_after
-    session.add(
-        StockMovement(
-            display_id=display.id,
-            change_quantity=change_quantity,
-            quantity_before=quantity_before,
-            quantity_after=quantity_after,
-            reason=reason.strip(),
-            is_sale=is_sale,
-            unit_purchase_price_cents=fifo_purchase_price,
-            unit_sale_price_cents=unit_sale_price_cents,
-            sale_price_type=sale_price_type if is_sale else "",
-            repair_id=repair_id,
-            supplier_id=supplier_id,
-            reseller_id=reseller_id,
-            movement_batch_id=movement_batch_id,
-            cashier_name=cashier_name,
-            invoice_number=invoice_number.strip(),
-            model_label=model_label.strip(),
-        )
+    movement = StockMovement(
+        display_id=display.id,
+        change_quantity=change_quantity,
+        quantity_before=quantity_before,
+        quantity_after=quantity_after,
+        reason=reason.strip(),
+        is_sale=is_sale,
+        unit_purchase_price_cents=fifo_purchase_price,
+        unit_sale_price_cents=unit_sale_price_cents,
+        sale_price_type=sale_price_type if is_sale else "",
+        repair_id=repair_id,
+        supplier_id=supplier_id,
+        reseller_id=reseller_id,
+        movement_batch_id=movement_batch_id,
+        cashier_name=cashier_name,
+        invoice_number=invoice_number.strip(),
+        model_label=model_label.strip(),
     )
+    session.add(movement)
     session.flush()
+    if change_quantity < 0:
+        _record_allocations(session, movement, allocations)
     return display
+
+
+def _record_allocations(
+    session: Session, movement: StockMovement, allocations: list[tuple[StockBatch, int]]
+) -> None:
+    """Mémorise quels lots une sortie de stock a consommés (voir LotAllocation)."""
+    for batch, take in allocations:
+        session.add(LotAllocation(
+            movement_id=movement.id,
+            batch_id=batch.id,
+            quantity=take,
+            unit_cost_cents=batch.unit_purchase_price_cents,
+        ))
+    session.flush()
+
+
+def restore_to_lots(session: Session, movement: StockMovement, quantity: int) -> None:
+    """Remet `quantity` pièces d'une sortie de stock (vente, ajustement)
+    dans leurs lots. Avec la trace des lots (sorties depuis la v2.4.21),
+    chaque pièce retourne exactement dans son lot, le dernier consommé
+    d'abord. Sans trace (anciennes ventes), elle retourne dans le plus
+    ancien lot déjà entamé, au coût de la vente. Ne touche pas à
+    `display.quantity` (à l'appelant)."""
+    remaining = quantity
+    allocations = session.scalars(
+        select(LotAllocation)
+        .where(LotAllocation.movement_id == movement.id)
+        .order_by(LotAllocation.id.desc())
+    ).all()
+    for allocation in allocations:
+        if remaining == 0:
+            break
+        take = min(allocation.quantity, remaining)
+        batch = session.get(StockBatch, allocation.batch_id)
+        if batch is not None:
+            batch.quantity_remaining += take
+        else:
+            _add_restored_batch(session, movement, take, allocation.unit_cost_cents)
+        allocation.quantity -= take
+        if allocation.quantity == 0:
+            session.delete(allocation)
+        remaining -= take
+    if remaining > 0:
+        _restore_without_trace(session, movement, remaining)
+    session.flush()
+
+
+def _restore_without_trace(session: Session, movement: StockMovement, quantity: int) -> None:
+    cost = movement.unit_purchase_price_cents
+    started = session.scalars(
+        select(StockBatch)
+        .where(
+            StockBatch.display_id == movement.display_id,
+            StockBatch.quantity_remaining < StockBatch.quantity_original,
+        )
+        .order_by(StockBatch.created_at, StockBatch.id)
+    ).all()
+    for batch in started:
+        if quantity == 0:
+            return
+        if batch.unit_purchase_price_cents == cost:
+            take = min(quantity, batch.quantity_original - batch.quantity_remaining)
+            batch.quantity_remaining += take
+            quantity -= take
+    if quantity > 0:
+        oldest = started[0] if started else None
+        _add_restored_batch(
+            session, movement, quantity, cost,
+            created_at=oldest.created_at if oldest else movement.created_at,
+            supplier_id=oldest.supplier_id if oldest else None,
+        )
+
+
+def _add_restored_batch(
+    session: Session, movement: StockMovement, quantity: int, cost: int,
+    created_at: datetime.datetime | None = None, supplier_id: int | None = None,
+) -> None:
+    session.add(StockBatch(
+        display_id=movement.display_id,
+        quantity_original=quantity,
+        quantity_remaining=quantity,
+        unit_purchase_price_cents=cost,
+        supplier_id=supplier_id,
+        created_at=created_at or movement.created_at,
+    ))
+
+
+def _consume_lots(session: Session, display: Display, quantity: int) -> list[tuple[StockBatch, int]]:
+    """Prend `quantity` pièces dans les lots, le plus ancien d'abord (FIFO)."""
+    batches = session.scalars(
+        select(StockBatch)
+        .where(StockBatch.display_id == display.id, StockBatch.quantity_remaining > 0)
+        .order_by(StockBatch.created_at, StockBatch.id)
+    ).all()
+    taken: list[tuple[StockBatch, int]] = []
+    for batch in batches:
+        if quantity == 0:
+            break
+        take = min(batch.quantity_remaining, quantity)
+        batch.quantity_remaining -= take
+        quantity -= take
+        taken.append((batch, take))
+    return taken
 
 
 def apply_stock_batch(
@@ -465,63 +574,233 @@ def _ensure_no_returns(session: Session, movements: list[StockMovement]) -> None
         )
 
 
-def cancel_movement_batch(session: Session, batch_id: int | None = None, movement_id: int | None = None) -> None:
-    """Annule tous les mouvements d'un lot (movement_batch_id).
-
-    Pour chaque mouvement :
-    - Entrée (achat) : supprime le lot FIFO correspondant et réduit le stock.
-    - Sortie (vente/ajustement) : restitue la quantité en créant un lot FIFO
-      au prix d'achat d'origine, et augmente le stock.
-    Les mouvements originaux sont supprimés (pas de trace d'annulation —
-    l'édition recréera de nouveaux mouvements corrects).
-    """
+def _batch_movements(
+    session: Session, batch_id: int | None, movement_id: int | None
+) -> list[StockMovement]:
     if batch_id is not None:
-        movements = (
-            session.query(StockMovement)
-            .filter(StockMovement.movement_batch_id == batch_id)
-            .all()
-        )
+        movements = list(session.scalars(
+            select(StockMovement).where(StockMovement.movement_batch_id == batch_id)
+            .order_by(StockMovement.id)
+        ).all())
     elif movement_id is not None:
-        movements = (
-            session.query(StockMovement)
-            .filter(StockMovement.id == movement_id)
-            .all()
-        )
+        movements = list(session.scalars(
+            select(StockMovement).where(StockMovement.id == movement_id)
+        ).all())
     else:
         raise StockError("batch_id ou movement_id requis.")
     if not movements:
         raise StockError("Mouvement introuvable.")
-    _ensure_no_returns(session, movements)
+    return movements
 
-    for mvt in movements:
-        display = get_display(session, mvt.display_id)
 
-        if mvt.change_quantity > 0:
-            # Annulation d'une entrée : supprimer le lot FIFO créé par cet achat
-            batch = (
-                session.query(StockBatch)
-                .filter(StockBatch.movement_batch_id == batch_id,
-                        StockBatch.display_id == mvt.display_id)
-                .first()
+def _entry_lot(session: Session, movement: StockMovement) -> StockBatch:
+    """Lot FIFO créé par une entrée de stock (achat, ajustement, stock initial)."""
+    if movement.movement_batch_id is not None:
+        lot = session.scalar(
+            select(StockBatch).where(
+                StockBatch.movement_batch_id == movement.movement_batch_id,
+                StockBatch.display_id == movement.display_id,
             )
-            if batch:
-                session.delete(batch)
-            display.quantity -= mvt.change_quantity
+        )
+    else:
+        # Stock initial / anciennes entrées sans n° d'opération : le lot de
+        # même quantité et même prix, créé au même moment.
+        candidates = session.scalars(
+            select(StockBatch).where(
+                StockBatch.display_id == movement.display_id,
+                StockBatch.movement_batch_id.is_(None),
+                StockBatch.quantity_original == movement.change_quantity,
+                StockBatch.unit_purchase_price_cents == movement.unit_purchase_price_cents,
+            )
+        ).all()
+        lot = min(
+            candidates,
+            key=lambda b: abs((b.created_at - movement.created_at).total_seconds()),
+            default=None,
+        )
+    if lot is None:
+        raise StockError(
+            f"Le lot de cette entrée de stock est introuvable : elle ne peut pas être modifiée."
+        )
+    return lot
+
+
+def edit_movement_batch(
+    session: Session,
+    *,
+    batch_id: int | None = None,
+    movement_id: int | None = None,
+    lines: list[tuple[int, int, int]],
+) -> None:
+    """Modifie EN PLACE une opération (achat, vente ou ajustement).
+
+    `lines` : (display_id, quantité, prix unitaire) — prix d'achat pour une
+    entrée, prix de vente pour une vente. Un produit absent de `lines` est
+    retiré de l'opération ; `lines` vide annule toute l'opération.
+
+    Conservés : date, n° d'opération (= n° de ticket), caissier, facture,
+    versement, modèle choisi, place des lots dans la file FIFO. La dette du
+    revendeur / fournisseur est corrigée de la différence de total.
+
+    Achat dont des pièces sont déjà vendues : quantité jamais en dessous du
+    nombre de pièces vendues ; un nouveau prix d'achat ne vaut que pour les
+    pièces encore en stock (les ventes passées gardent leur coût).
+    """
+    movements = _batch_movements(session, batch_id, movement_id)
+    _ensure_no_returns(session, movements)
+    first = movements[0]
+    is_entry = first.change_quantity > 0
+    wanted: dict[int, tuple[int, int]] = {}
+    for display_id, quantity, price in lines:
+        if quantity <= 0:
+            raise StockError("La quantité de chaque produit doit être positive.")
+        if price < 0:
+            raise StockError("Le prix ne peut pas être négatif.")
+        if display_id in wanted:
+            raise StockError("Un même produit apparaît deux fois dans l'opération.")
+        wanted[display_id] = (quantity, price)
+
+    def line_total(m: StockMovement) -> int:
+        price = m.unit_purchase_price_cents if is_entry else m.unit_sale_price_cents
+        return (price or 0) * abs(m.change_quantity)
+
+    old_total = sum(line_total(m) for m in movements)
+    new_total = 0
+
+    for m in movements:
+        new_qty, new_price = wanted.pop(m.display_id, (0, None))
+        if is_entry:
+            _edit_entry(session, m, new_qty, new_price)
         else:
-            # Annulation d'une sortie : remettre la quantité en stock via un nouveau lot
-            qty = abs(mvt.change_quantity)
-            display.quantity += qty
-            session.add(StockBatch(
-                display_id=display.id,
-                quantity_original=qty,
-                quantity_remaining=qty,
-                unit_purchase_price_cents=mvt.unit_purchase_price_cents,
-                movement_batch_id=None,
-            ))
+            _edit_exit(session, m, new_qty, new_price)
+        if new_qty:
+            new_total += line_total(m)
 
-        session.delete(mvt)
+    # Produits ajoutés à l'opération : même date, même n°, même contact.
+    if wanted and first.movement_batch_id is None:
+        raise StockError("Impossible d'ajouter un produit à cette opération (stock initial).")
+    for display_id, (quantity, price) in wanted.items():
+        adjust_stock(
+            session,
+            display_id,
+            change_quantity=quantity if is_entry else -quantity,
+            reason=first.reason,
+            is_sale=first.is_sale,
+            sale_price_type=first.sale_price_type or None,
+            unit_sale_price_cents=None if is_entry else price,
+            unit_purchase_price_cents=price if is_entry else None,
+            supplier_id=first.supplier_id,
+            reseller_id=first.reseller_id,
+            movement_batch_id=first.movement_batch_id,
+            invoice_number=first.invoice_number,
+        )
+        added = session.scalars(
+            select(StockMovement).where(StockMovement.display_id == display_id)
+            .order_by(StockMovement.id.desc()).limit(1)
+        ).one()
+        added.created_at = first.created_at
+        added.cashier_name = first.cashier_name
+        added.versement_cents = first.versement_cents
+        added.remise_cents = first.remise_cents
+        added.reseller_balance_before_cents = first.reseller_balance_before_cents
+        added.supplier_versement_cents = first.supplier_versement_cents
+        added.supplier_balance_before_cents = first.supplier_balance_before_cents
+        if is_entry:
+            lot = _entry_lot(session, added)
+            lot.created_at = first.created_at  # même place dans la file FIFO
+        new_total += line_total(added)
 
+    delta = new_total - old_total
+    if delta:
+        if first.is_sale and first.reseller_id is not None:
+            reseller = session.get(Reseller, first.reseller_id)
+            if reseller is not None:
+                reseller.balance_cents += delta
+        elif is_entry and first.supplier_id is not None:
+            supplier = session.get(Supplier, first.supplier_id)
+            if supplier is not None:
+                supplier.balance_cents += delta
     session.flush()
+
+
+def _edit_entry(session: Session, m: StockMovement, new_qty: int, new_price: int | None) -> None:
+    lot = _entry_lot(session, m)
+    display = get_display(session, m.display_id)
+    old_qty = m.change_quantity
+    gone = lot.quantity_original - lot.quantity_remaining  # pièces déjà sorties de ce lot
+    if new_qty < gone:
+        label = display.reference
+        raise StockError(
+            f"{label} : {gone} pièce(s) de cet achat déjà vendue(s) ou sortie(s) — "
+            f"quantité minimum {gone}. Pour rendre des pièces au fournisseur, "
+            "utilisez Retour fournisseur."
+        )
+    delta = new_qty - old_qty
+    if display.quantity + delta < 0:
+        raise StockError(f"{display.reference} : le stock deviendrait négatif.")
+    display.quantity += delta
+    if new_qty == 0:
+        session.delete(lot)
+        session.delete(m)
+        return
+    lot.quantity_original = new_qty
+    lot.quantity_remaining += delta
+    m.change_quantity = new_qty
+    m.quantity_after = m.quantity_before + new_qty
+    if new_price is not None and new_price != m.unit_purchase_price_cents:
+        # 1a : le nouveau prix vaut pour les pièces encore en stock ; les
+        # ventes déjà faites gardent le coût figé sur leur ligne.
+        lot.unit_purchase_price_cents = new_price
+        m.unit_purchase_price_cents = new_price
+        latest = session.scalar(
+            select(StockBatch).where(StockBatch.display_id == display.id)
+            .order_by(StockBatch.created_at.desc(), StockBatch.id.desc()).limit(1)
+        )
+        if latest is lot:
+            display.purchase_price_cents = new_price
+
+
+def _edit_exit(session: Session, m: StockMovement, new_qty: int, new_price: int | None) -> None:
+    display = get_display(session, m.display_id)
+    old_qty = abs(m.change_quantity)
+    if new_qty < old_qty:
+        restore_to_lots(session, m, old_qty - new_qty)
+        display.quantity += old_qty - new_qty
+        if new_qty > 0:
+            left = session.scalars(
+                select(LotAllocation).where(LotAllocation.movement_id == m.id)
+            ).all()
+            if left and sum(a.quantity for a in left) == new_qty:
+                m.unit_purchase_price_cents = sum(a.quantity * a.unit_cost_cents for a in left) // new_qty
+    elif new_qty > old_qty:
+        extra = new_qty - old_qty
+        if display.quantity < extra:
+            raise StockError(
+                f"Stock insuffisant pour {display.reference} : {display.quantity} disponible(s)."
+            )
+        taken = _consume_lots(session, display, extra)
+        _record_allocations(session, m, taken)
+        extra_cost = sum(t * b.unit_purchase_price_cents for b, t in taken)
+        m.unit_purchase_price_cents = (m.unit_purchase_price_cents * old_qty + extra_cost) // new_qty
+        display.quantity -= extra
+    if new_qty == 0:
+        for allocation in session.scalars(
+            select(LotAllocation).where(LotAllocation.movement_id == m.id)
+        ).all():
+            session.delete(allocation)
+        session.delete(m)
+        return
+    m.change_quantity = -new_qty
+    m.quantity_after = m.quantity_before - new_qty
+    if m.is_sale and new_price is not None:
+        m.unit_sale_price_cents = new_price
+
+
+def cancel_movement_batch(session: Session, batch_id: int | None = None, movement_id: int | None = None) -> None:
+    """Annule toute une opération (voir edit_movement_batch) : stock remis
+    dans les lots, dettes corrigées. Refusé pour un achat dont des pièces
+    sont déjà vendues."""
+    edit_movement_batch(session, batch_id=batch_id, movement_id=movement_id, lines=[])
 
 
 def deactivate_display(session: Session, display_id: int) -> None:

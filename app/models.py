@@ -379,6 +379,26 @@ class StockBatch(Base):
         )
 
 
+class LotAllocation(Base):
+    """Pièces d'un lot (StockBatch) consommées par une sortie de stock
+    (vente, ajustement, réparation). Permet de remettre une pièce dans son
+    lot d'origine (modification de vente, retour client). `quantity` =
+    pièces encore sorties : diminue quand des pièces reviennent.
+
+    N'existe que pour les sorties faites depuis la v2.4.21."""
+
+    __tablename__ = "lot_allocations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    movement_id: Mapped[int] = mapped_column(ForeignKey("stock_movements.id"), index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("stock_batches.id"), index=True)
+    quantity: Mapped[int]
+    unit_cost_cents: Mapped[int] = mapped_column(default=0)
+
+    def __repr__(self) -> str:
+        return f"<LotAllocation movement={self.movement_id} batch={self.batch_id} qty={self.quantity}>"
+
+
 class ReturnDoc(Base):
     """Un bon de retour — client/revendeur (le produit revient) ou
     fournisseur (le produit repart). Regroupe une ou plusieurs lignes

@@ -1,8 +1,9 @@
 """Boîte de dialogue d'édition d'un lot de mouvements (achat ou vente).
 
 Permet de modifier la quantité et le prix de chaque produit, d'en ajouter
-ou d'en supprimer. Au moment de la validation, le lot original est annulé
-(cancel_movement_batch) et un nouveau lot est créé avec les nouvelles données.
+ou d'en supprimer. L'opération est modifiée EN PLACE (edit_movement_batch) :
+date, n° de ticket, caissier, facture et place des lots sont conservés, et
+la dette du revendeur / fournisseur est corrigée de la différence.
 """
 
 from __future__ import annotations
@@ -27,8 +28,7 @@ from app.database import session_scope
 from app.money import cents_to_da, da_to_cents, format_da
 from app.services import (
     StockError,
-    apply_stock_batch,
-    cancel_movement_batch,
+    edit_movement_batch,
     list_displays,
 )
 from app.ui.frameless_dialog import FramelessDialog
@@ -327,16 +327,8 @@ class MovementEditDialog(FramelessDialog):
 
         try:
             with session_scope() as session:
-                cancel_movement_batch(session, batch_id=self._batch_id, movement_id=self._movement_id)
-                apply_stock_batch(
-                    session,
-                    direction=self._direction,
-                    lines=lines,
-                    is_sale=self._is_sale,
-                    sale_price_type=self._sale_price_type,
-                    supplier_id=self._supplier_id,
-                    reseller_id=self._reseller_id,
-                    reason=self._reason,
+                edit_movement_batch(
+                    session, batch_id=self._batch_id, movement_id=self._movement_id, lines=lines
                 )
         except StockError as e:
             self._error_label.setText(str(e))

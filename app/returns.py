@@ -36,7 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Display, Reseller, ReturnDoc, ReturnLine, StockBatch, StockMovement, Supplier
-from app.services import StockError, get_display
+from app.services import StockError, get_display, restore_to_lots
 from app.labels import article_label
 from app.search import matches
 
@@ -414,6 +414,35 @@ def _stock_in(
     )
 
 
+def _stock_back_from_sale(
+    session: Session,
+    display: Display,
+    *,
+    sale: StockMovement,
+    quantity: int,
+    reason: str,
+    doc: ReturnDoc,
+) -> None:
+    """Retour client en bon état : la pièce revient dans son lot d'origine
+    (même fournisseur, même place dans la file FIFO) — voir restore_to_lots."""
+    restore_to_lots(session, sale, quantity)
+    before = display.quantity
+    display.quantity += quantity
+    session.add(
+        StockMovement(
+            display_id=display.id,
+            change_quantity=quantity,
+            quantity_before=before,
+            quantity_after=display.quantity,
+            reason=reason,
+            unit_purchase_price_cents=sale.unit_purchase_price_cents,
+            reseller_id=doc.reseller_id,
+            linked_batch_id=doc.source_batch_id,
+            return_id=doc.id,
+        )
+    )
+
+
 def _stock_out(
     session: Session,
     display: Display,
@@ -546,11 +575,11 @@ def create_customer_return(
             )
         )
         if condition == "good":
-            _stock_in(
+            _stock_back_from_sale(
                 session,
                 get_display(session, sale.display_id),
+                sale=sale,
                 quantity=qty,
-                unit_cost_cents=sale.unit_purchase_price_cents,
                 reason=f"Retour client — bon R{doc.id}",
                 doc=doc,
             )
