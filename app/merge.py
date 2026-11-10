@@ -13,6 +13,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Display, ReturnLine, RepairItem, StockBatch, StockMovement, Supplier
+from app.lot_pricing import refresh_wholesale_price
 from app.services import StockError
 
 # Seuil de ressemblance (part de mots du modèle en commun) pour suggérer
@@ -141,6 +142,7 @@ def merge_displays(session: Session, keep_id: int, drop_id: int) -> Display:
     drop.is_active = False
     drop.notes = _append_lines(drop.notes, f"Fusionné dans {keep.reference}")
     session.flush()
+    refresh_wholesale_price(session, keep)
     session.expire(keep)
     session.expire(drop)
 

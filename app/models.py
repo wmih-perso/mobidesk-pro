@@ -363,6 +363,10 @@ class StockBatch(Base):
     quantity_original: Mapped[int]
     quantity_remaining: Mapped[int]
     unit_purchase_price_cents: Mapped[int] = mapped_column(default=0)
+    # Prix gros de ce lot : tant que le lot est le plus ancien en stock, il
+    # devient le prix gros du produit (voir app/lot_pricing.py). None pour
+    # les lots créés avant la v2.4.22 (prix de la fiche produit).
+    sale_price_wholesale_cents: Mapped[int | None] = mapped_column(default=None)
 
     supplier_id: Mapped[int | None] = mapped_column(
         ForeignKey("suppliers.id"), default=None, index=True

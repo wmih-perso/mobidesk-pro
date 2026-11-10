@@ -36,6 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Display, Reseller, ReturnDoc, ReturnLine, StockBatch, StockMovement, Supplier
+from app.lot_pricing import refresh_wholesale_price
 from app.services import StockError, get_display, restore_to_lots
 from app.labels import article_label
 from app.search import matches
@@ -396,6 +397,7 @@ def _stock_in(
             quantity_remaining=quantity,
             unit_purchase_price_cents=unit_cost_cents,
             supplier_id=doc.supplier_id,
+            sale_price_wholesale_cents=display.sale_price_wholesale_cents,
         )
     )
     session.add(
@@ -425,7 +427,7 @@ def _stock_back_from_sale(
 ) -> None:
     """Retour client en bon état : la pièce revient dans son lot d'origine
     (même fournisseur, même place dans la file FIFO) — voir restore_to_lots."""
-    restore_to_lots(session, sale, quantity)
+    restore_to_lots(session, sale, quantity)  # le prix gros suit le lot rendu
     before = display.quantity
     display.quantity += quantity
     session.add(
@@ -478,6 +480,7 @@ def _stock_out(
 
     before = display.quantity
     display.quantity -= quantity
+    refresh_wholesale_price(session, display)
     session.add(
         StockMovement(
             display_id=display.id,

@@ -350,6 +350,12 @@ def _migrate_stock_batches_schema(engine) -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE stock_batches ADD COLUMN movement_batch_id INTEGER"
             )
+        # Prix gros propre au lot (v2.4.22) : vide (NULL) pour les lots
+        # existants, qui gardent le prix gros de la fiche produit.
+        if "sale_price_wholesale_cents" not in existing:
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_batches ADD COLUMN sale_price_wholesale_cents INTEGER"
+            )
         connection.commit()
 
 

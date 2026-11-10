@@ -39,7 +39,9 @@ from app.money import cents_to_da, da_to_cents, format_balance, format_da
 from app.services import StockError, apply_stock_batch, list_displays, list_resellers
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox, add_clear_button
+from app import session as _session
 from app.locations import location_label
+from app.lot_pricing import fifo_cost_for_quantity, lots_by_display, wholesale_for_quantity
 from app.search import brand_words, filter_and_rank
 
 MONTH_NAMES_FR = [
@@ -358,6 +360,9 @@ class SalePage(QWidget):
         self._display_choices: list[tuple[int, str, str, str, int, int, int]] = []
         self._models_by_id: dict[int, list[str]] = {}  # modèles compatibles par produit
         self._location_by_id: dict[int, str] = {}  # emplacement affiché par produit
+        self._lots_by_id: dict = {}  # lots en stock (FIFO) : prix gros par lot, coût
+        self._purchase_by_id: dict[int, int] = {}  # prix d'achat de la fiche (secours)
+        self._setting_price = False  # prix posé par le programme (pas par le vendeur)
         self._aliases_by_id: dict[int, str] = {}  # anciennes références (produits fusionnés)
         self._carts: list[dict] = [_empty_cart()]
         self._current = 0
@@ -389,6 +394,8 @@ class SalePage(QWidget):
                 d.id: location_label(d.location_number) for d in displays
             }
             self._brand_words = brand_words(d.brand for d in displays if d.brand)
+            self._lots_by_id = lots_by_display(session)
+            self._purchase_by_id = {d.id: d.purchase_price_cents for d in displays}
             resellers = list_resellers(session)
 
         current_id = self.reseller_combo.currentData() if hasattr(self, "reseller_combo") else None
@@ -777,7 +784,9 @@ class SalePage(QWidget):
         qty_stock: int = 0,
     ) -> None:
         is_wholesale = self._sale_type() == "wholesale"
-        base_price = wholesale_cents if is_wholesale else retail_cents
+        base_price = (
+            self._lot_price(display_id, 1, wholesale_cents) if is_wholesale else retail_cents
+        )
         row = self.lines_table.rowCount()
         self.lines_table.insertRow(row)
 
@@ -833,6 +842,10 @@ class SalePage(QWidget):
         price_spin.setFixedHeight(34)
         price_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         price_spin.setValue(cents_to_da(base_price))
+        # Prix proposé automatiquement (suit la quantité, voir _on_qty_changed)
+        # tant que le vendeur ne l'a pas changé à la main.
+        price_spin.setProperty("auto_price", is_wholesale)
+        price_spin.valueChanged.connect(lambda _v, spin=price_spin: self._on_price_edited(spin))
         price_spin.valueChanged.connect(self._update_total)
         self.lines_table.setCellWidget(row, 5, _spin_cell(price_spin))
 
@@ -841,6 +854,10 @@ class SalePage(QWidget):
         qty_spin.setRange(1, 1_000_000)
         qty_spin.setFixedHeight(34)
         qty_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        qty_spin.valueChanged.connect(
+            lambda qty, d=display_id, w=wholesale_cents, spin=price_spin:
+                self._on_qty_changed(d, w, qty, spin)
+        )
         qty_spin.valueChanged.connect(self._update_total)
         self.lines_table.setCellWidget(row, 6, _spin_cell(qty_spin))
 
@@ -867,6 +884,59 @@ class SalePage(QWidget):
             (display_id, retail_cents, wholesale_cents, qty_spin, price_spin, model_combo)
         )
         self._update_total()
+
+    def _lot_price(self, display_id: int, quantity: int, default_cents: int) -> int:
+        """Prix gros des `quantity` prochaines pièces : prix du lot en cours,
+        ou moyenne des lots si la quantité en prend plusieurs."""
+        return wholesale_for_quantity(self._lots_by_id.get(display_id, []), quantity, default_cents)
+
+    def _set_price(self, price_spin: ModernDoubleSpinBox, cents: int) -> None:
+        self._setting_price = True
+        try:
+            price_spin.setValue(cents_to_da(cents))
+        finally:
+            self._setting_price = False
+
+    def _on_price_edited(self, price_spin: ModernDoubleSpinBox) -> None:
+        price_spin.setStyleSheet("")  # retire le cadre rouge « sous le coût »
+        if not self._setting_price:
+            price_spin.setProperty("auto_price", False)
+
+    def _on_qty_changed(self, display_id: int, default_cents: int, quantity: int,
+                        price_spin: ModernDoubleSpinBox) -> None:
+        if price_spin.property("auto_price"):
+            self._set_price(price_spin, self._lot_price(display_id, quantity, default_cents))
+
+    def _check_not_below_cost(self, remise_cents: int, subtotal_cents: int) -> bool:
+        """E6 : refuse une vente dont une ligne (remise comprise) est vendue
+        sous le coût d'achat FIFO des pièces qui vont sortir du stock."""
+        ratio = remise_cents / subtotal_cents if subtotal_cents > 0 else 0.0
+        below = []
+        for display_id, _ret, _who, qty_spin, price_spin, _model in self._line_rows:
+            qty = qty_spin.value()
+            unit = round(da_to_cents(price_spin.value()) * (1 - ratio))
+            cost = fifo_cost_for_quantity(
+                self._lots_by_id.get(display_id, []), qty, self._purchase_by_id.get(display_id, 0)
+            )
+            if unit * qty < cost:
+                price_spin.setStyleSheet(
+                    "QDoubleSpinBox { border: 2px solid #dc2626; border-radius: 4px; background: #fef2f2; }"
+                )
+                below.append((display_id, unit, cost // max(qty, 1)))
+        if not below:
+            return True
+        if _session.is_admin():
+            refs = {c[0]: c[1] for c in self._display_choices}
+            details = ", ".join(
+                f"{refs.get(d, '?')} : {format_da(u)} < coût {format_da(c)}" for d, u, c in below
+            )
+            self.error_label.setText(f"⛔ Vente sous le coût d'achat ({details}). Corrigez le prix.")
+        else:
+            self.error_label.setText(
+                "⛔ Prix inférieur au coût d'achat (case en rouge). Corrigez le prix "
+                "ou demandez à l'administrateur."
+            )
+        return False
 
     def _remove_line_row(self, qty_spin: ModernSpinBox) -> None:
         for i, (_d_id, _ret, _who, spin, _price, _model) in enumerate(self._line_rows):
@@ -937,6 +1007,9 @@ class SalePage(QWidget):
         )
         remise_cents = min(da_to_cents(self.remise_spin.value()), subtotal_cents)
         net_cents = max(0, subtotal_cents - remise_cents)
+
+        if not self._check_not_below_cost(remise_cents, subtotal_cents):
+            return
 
         if sale_type == "wholesale":
             reseller_id = self.reseller_combo.currentData()
@@ -1051,7 +1124,9 @@ class SalePage(QWidget):
                 if saved_model >= 0:
                     model_combo.setCurrentIndex(saved_model)
                 qty_spin.setValue(int(line.get("qty") or 1))
-                price_spin.setValue(float(line.get("price_da") or 0))
+                saved_price = float(line.get("price_da") or 0)
+                if saved_price != price_spin.value():
+                    price_spin.setValue(saved_price)  # prix changé à la main : gardé
         finally:
             self._loading = False
         self._update_total()

@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.locations import normalize_location
+from app.lot_pricing import refresh_wholesale_price, set_current_lot_wholesale
 from app.models import (
     Category, Display, Expense, LotAllocation, Repair, RepairItem, Reseller, ResellerPayment,
     StockBatch, StockMovement, Supplier, SupplierPayment, User,
@@ -156,6 +157,7 @@ def create_display(
                 quantity_original=quantity,
                 quantity_remaining=quantity,
                 unit_purchase_price_cents=purchase_price_cents,
+                sale_price_wholesale_cents=sale_price_wholesale_cents,
             )
         )
         session.add(
@@ -207,6 +209,8 @@ def update_display(
     display.quality = quality.strip()
     display.purchase_price_cents = purchase_price_cents
     display.sale_price_retail_cents = sale_price_retail_cents
+    if sale_price_wholesale_cents != display.sale_price_wholesale_cents:
+        set_current_lot_wholesale(session, display, sale_price_wholesale_cents)
     display.sale_price_wholesale_cents = sale_price_wholesale_cents
     display.min_stock = min_stock
     display.notes = notes.strip()
@@ -241,8 +245,13 @@ def adjust_stock(
     movement_batch_id: int | None = None,
     invoice_number: str = "",
     model_label: str = "",
+    lot_wholesale_cents: int | None = None,
 ) -> Display:
     """Ajoute ou retire une quantité du stock d'une pièce.
+
+    Entrée : `lot_wholesale_cents` = prix gros du nouveau lot (par défaut le
+    prix gros actuel du produit). Après chaque mouvement, le prix gros du
+    produit suit le lot le plus ancien en stock (app/lot_pricing.py).
 
     Le stock ne doit jamais devenir négatif. Si `is_sale` est vrai,
     `sale_price_type` ("retail" ou "wholesale") est obligatoire — il indique
@@ -292,6 +301,10 @@ def adjust_stock(
             unit_purchase_price_cents=batch_price,
             supplier_id=supplier_id,
             movement_batch_id=movement_batch_id,
+            sale_price_wholesale_cents=(
+                lot_wholesale_cents if lot_wholesale_cents is not None
+                else display.sale_price_wholesale_cents
+            ),
         ))
         if unit_purchase_price_cents is not None and unit_purchase_price_cents >= 0:
             display.purchase_price_cents = unit_purchase_price_cents
@@ -360,6 +373,7 @@ def adjust_stock(
     session.flush()
     if change_quantity < 0:
         _record_allocations(session, movement, allocations)
+    refresh_wholesale_price(session, display)
     return display
 
 
@@ -406,6 +420,7 @@ def restore_to_lots(session: Session, movement: StockMovement, quantity: int) ->
     if remaining > 0:
         _restore_without_trace(session, movement, remaining)
     session.flush()
+    refresh_wholesale_price(session, get_display(session, movement.display_id))
 
 
 def _restore_without_trace(session: Session, movement: StockMovement, quantity: int) -> None:
@@ -484,7 +499,8 @@ def apply_stock_batch(
     transaction atomique. Si `versement_cents` est fourni pour une vente
     revendeur, met à jour le solde du revendeur et annote les mouvements.
     Chaque ligne est (display_id, quantité, prix) ou, en option,
-    (display_id, quantité, prix, modèle choisi).
+    (display_id, quantité, prix, modèle choisi) pour une vente, et
+    (display_id, quantité, prix d'achat, prix gros du lot) pour une entrée.
     """
     if not lines:
         raise StockError("Ajoutez au moins un produit.")
@@ -506,6 +522,7 @@ def apply_stock_batch(
             movement_batch_id=batch_id,
             invoice_number=invoice_number,
             model_label=(extra[0] if extra else "") if is_sale else "",
+            lot_wholesale_cents=(extra[0] if extra and not is_sale else None),
         )
         results.append(display)
 
@@ -675,6 +692,9 @@ def edit_movement_batch(
             _edit_exit(session, m, new_qty, new_price)
         if new_qty:
             new_total += line_total(m)
+
+    for display_id in {m.display_id for m in movements}:
+        refresh_wholesale_price(session, get_display(session, display_id))
 
     # Produits ajoutés à l'opération : même date, même n°, même contact.
     if wanted and first.movement_batch_id is None:

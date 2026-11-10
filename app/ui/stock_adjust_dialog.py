@@ -62,6 +62,8 @@ class _BaseStockBatchDialog(FramelessDialog):
     is_sale: bool = False
     sale_price_type: str | None = None
     show_price_column: bool = False
+    # Achat fournisseur : prix gros propre au lot acheté (app/lot_pricing.py).
+    show_wholesale_column: bool = False
     _dialog_title: str = "Mouvement de stock"
 
     def __init__(self, display_id: int | None = None) -> None:
@@ -69,6 +71,7 @@ class _BaseStockBatchDialog(FramelessDialog):
         self.setMinimumWidth(560)
         self.setModal(True)
         self._line_rows: list[tuple[int, ModernSpinBox, ModernDoubleSpinBox | None]] = []
+        self._wholesale_spins: dict[int, ModernDoubleSpinBox] = {}  # display_id → prix gros
 
         self._build_ui()
         if display_id is not None:
@@ -107,14 +110,16 @@ class _BaseStockBatchDialog(FramelessDialog):
         layout.addWidget(products_label)
 
         with session_scope() as session:
+            displays = list_displays(session)
             self._display_choices = [
                 (
                     d.id,
                     f"{d.reference} — {d.brand} {d.phone_model} (stock : {d.quantity})".strip(),
                     self._default_price_cents(d),
                 )
-                for d in list_displays(session)
+                for d in displays
             ]
+            self._wholesale_by_id = {d.id: d.sale_price_wholesale_cents for d in displays}
 
         self.search_input = QLineEdit()
 
@@ -133,9 +138,10 @@ class _BaseStockBatchDialog(FramelessDialog):
 
         columns = ["Produit", "Quantité"]
         if self.show_price_column:
-            columns += ["Prix unitaire", ""]
-        else:
-            columns += [""]
+            columns += ["Prix achat" if self.show_wholesale_column else "Prix unitaire"]
+        if self.show_wholesale_column:
+            columns += ["Prix gros"]
+        columns += [""]
         self.lines_table = QTableWidget(0, len(columns))
         self.lines_table.setHorizontalHeaderLabels(columns)
         header = self.lines_table.horizontalHeader()
@@ -143,14 +149,10 @@ class _BaseStockBatchDialog(FramelessDialog):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.lines_table.setColumnWidth(1, 100)
-        if self.show_price_column:
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-            self.lines_table.setColumnWidth(2, 120)
-            self.lines_table.setColumnWidth(3, 36)
-        else:
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-            self.lines_table.setColumnWidth(2, 36)
+        for column in range(2, len(columns)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self.lines_table.setColumnWidth(column, 120)
+        self.lines_table.setColumnWidth(len(columns) - 1, 36)
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.verticalHeader().setDefaultSectionSize(44)
         self.lines_table.setFixedHeight(160)
@@ -273,6 +275,21 @@ class _BaseStockBatchDialog(FramelessDialog):
         else:
             remove_column = 2
 
+        if self.show_wholesale_column:
+            wholesale_spin = ModernDoubleSpinBox()
+            wholesale_spin.setRange(0, 10_000_000)
+            wholesale_spin.setDecimals(0)
+            wholesale_spin.setSuffix(" DA")
+            wholesale_spin.setMinimumHeight(32)
+            wholesale_spin.setToolTip(
+                "Prix gros de ces pièces : il s'appliquera quand les pièces "
+                "plus anciennes seront vendues."
+            )
+            wholesale_spin.setValue(cents_to_da(self._wholesale_by_id.get(display_id, 0)))
+            self.lines_table.setCellWidget(row_index, remove_column, wholesale_spin)
+            self._wholesale_spins[display_id] = wholesale_spin
+            remove_column += 1
+
         remove_button = QPushButton("×")
         remove_button.setObjectName("IconButton")
         remove_button.setStyleSheet("padding: 0; font-size: 15px; color: #dc2626; font-weight: 700;")
@@ -283,10 +300,11 @@ class _BaseStockBatchDialog(FramelessDialog):
         self._update_total()
 
     def _remove_line_row(self, quantity_spin: ModernSpinBox) -> None:
-        for row_index, (_display_id, spin, _price) in enumerate(self._line_rows):
+        for row_index, (display_id, spin, _price) in enumerate(self._line_rows):
             if spin is quantity_spin:
                 self.lines_table.removeRow(row_index)
                 self._line_rows.pop(row_index)
+                self._wholesale_spins.pop(display_id, None)
                 break
         self._update_total()
 
@@ -311,6 +329,8 @@ class _BaseStockBatchDialog(FramelessDialog):
     def _on_save(self) -> None:
         lines = [
             (display_id, spin.value(), da_to_cents(price.value()) if price is not None else None)
+            + ((da_to_cents(self._wholesale_spins[display_id].value()),)
+               if display_id in self._wholesale_spins else ())
             for display_id, spin, price in self._line_rows
         ]
 
@@ -344,10 +364,12 @@ class SupplierPurchaseDialog(_BaseStockBatchDialog):
     is_sale = False
     sale_price_type = None
     show_price_column = True
+    show_wholesale_column = True
     _dialog_title = "Achat fournisseur"
 
     def __init__(self, display_id: int | None = None) -> None:
         super().__init__(display_id)
+        self.setMinimumWidth(720)  # colonne Prix gros en plus
 
     def _default_price_cents(self, display) -> int:
         return display.purchase_price_cents
