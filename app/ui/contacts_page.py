@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -73,8 +74,9 @@ class ContactsPage(QWidget):
     def __init__(self, mode: ContactMode) -> None:
         super().__init__()
         self._mode = mode
-        self._contacts: list = []
-        self._selected_id: int | None = None
+        self._contacts: list = []  # liste affichée (filtrée par la recherche)
+        self._all_contacts: list = []
+        self._detail_id: int | None = None  # contact dont l'historique est ouvert
         self._build_ui()
         self.refresh()
 
@@ -83,7 +85,15 @@ class ContactsPage(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        """Deux vues dans la même page : la liste des contacts, puis
+        l'historique d'un contact (double-clic), avec « ← Retour »."""
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._stack = QStackedWidget()
+        outer.addWidget(self._stack)
+
+        list_page = QWidget()
+        layout = QVBoxLayout(list_page)
         layout.setContentsMargins(24, 20, 24, 24)
         layout.setSpacing(0)
 
@@ -101,7 +111,7 @@ class ContactsPage(QWidget):
         layout.addLayout(header_row)
         layout.addSpacing(6)
 
-        hint = QLabel("Sélectionnez un contact pour voir son historique.")
+        hint = QLabel("Double-cliquez sur un contact pour ouvrir son historique.")
         hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
         layout.addWidget(hint)
         layout.addSpacing(10)
@@ -120,10 +130,6 @@ class ContactsPage(QWidget):
         search_row.addStretch()
         layout.addLayout(search_row)
         layout.addSpacing(10)
-
-        # Splitter vertical
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
 
         # --- Tableau des contacts ---
         list_card = QFrame()
@@ -154,10 +160,10 @@ class ContactsPage(QWidget):
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.contacts_table.setColumnWidth(
-            4, 180 if self._mode == "suppliers" and _session.is_admin() else 140
+            4, 210 if self._mode == "suppliers" and _session.is_admin() else 175
         )
 
-        self.contacts_table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.contacts_table.cellDoubleClicked.connect(self._on_row_double_clicked)
         list_layout.addWidget(self.contacts_table)
 
         self._empty_label = QLabel(
@@ -167,14 +173,36 @@ class ContactsPage(QWidget):
         self._empty_label.setStyleSheet("color: #94a3b8; font-size: 13px; padding: 24px;")
         self._empty_label.setVisible(False)
         list_layout.addWidget(self._empty_label)
-        splitter.addWidget(list_card)
+        layout.addWidget(list_card, stretch=1)
+        self._stack.addWidget(list_page)
 
-        # --- Panneau de détail ---
+        # --- Page historique d'un contact ---
+        detail_page = QWidget()
+        detail_layout = QVBoxLayout(detail_page)
+        detail_layout.setContentsMargins(24, 16, 24, 24)
+        detail_layout.setSpacing(8)
+        top_row = QHBoxLayout()
+        back_btn = QPushButton(f"←  Retour aux {title_text.lower()}")
+        back_btn.setObjectName("SecondaryButton")
+        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_btn.clicked.connect(self._show_list)
+        top_row.addWidget(back_btn)
+        top_row.addStretch()
+        pay_btn = QPushButton("💰  Versement")
+        pay_btn.clicked.connect(lambda: self._detail_id and self._on_versement(self._detail_id))
+        top_row.addWidget(pay_btn)
+        if self._mode == "suppliers" and _session.is_admin():
+            adjust_btn = QPushButton("⚖  Ajuster le solde")
+            adjust_btn.setObjectName("SecondaryButton")
+            adjust_btn.clicked.connect(lambda: self._detail_id and self._on_adjust(self._detail_id))
+            top_row.addWidget(adjust_btn)
+        detail_layout.addLayout(top_row)
         self._detail_panel = _DetailPanel(mode=self._mode)
-        splitter.addWidget(self._detail_panel)
-        splitter.setSizes([300, 300])
-
-        layout.addWidget(splitter, stretch=1)
+        detail_layout.addWidget(self._detail_panel, stretch=1)
+        self._stack.addWidget(detail_page)
+        back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), detail_page)
+        back_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        back_shortcut.activated.connect(self._show_list)
 
     # ------------------------------------------------------------------
     # Données
@@ -187,10 +215,14 @@ class ContactsPage(QWidget):
             else:
                 self._all_contacts = list_suppliers(session)
         self._render_contacts()
-        if self._selected_id is not None:
-            contact = next((c for c in self._all_contacts if c.id == self._selected_id), None)
-            if contact is not None:
-                self._load_detail(contact.id, contact.name)
+        if self._detail_id is not None:
+            if self._contact(self._detail_id) is None:  # supprimé entre-temps
+                self._show_list()
+            else:
+                self._load_detail(self._detail_id)
+
+    def _contact(self, contact_id: int):
+        return next((c for c in self._all_contacts if c.id == contact_id), None)
 
     def _render_contacts(self) -> None:
         """Liste des contacts, filtrée par le champ de recherche du haut."""
@@ -235,36 +267,38 @@ class ContactsPage(QWidget):
                                            versement_cb=self._on_versement,
                                            adjust_cb=adjust_cb)
             self.contacts_table.setCellWidget(i, 4, actions)
-            if c.id == self._selected_id:
+            if c.id == self._detail_id:
                 self.contacts_table.selectRow(i)
         self.contacts_table.blockSignals(False)
 
-    def _on_selection_changed(self) -> None:
-        rows = self.contacts_table.selectionModel().selectedRows()
-        if not rows:
-            self._selected_id = None
-            self._detail_panel.clear()
-            return
-        row = rows[0].row()
-        if row < len(self._contacts):
-            contact = self._contacts[row]
-            new_contact = contact.id != self._selected_id
-            self._selected_id = contact.id
-            self._load_detail(contact.id, contact.name, new_contact=new_contact)
+    def _on_row_double_clicked(self, row: int, _column: int) -> None:
+        if 0 <= row < len(self._contacts):
+            self._open_contact(self._contacts[row].id)
 
-    def _load_detail(self, contact_id: int, contact_name: str = "", new_contact: bool = False) -> None:
+    def _open_contact(self, contact_id: int) -> None:
+        """Ouvre la page historique du contact (à la place de la liste)."""
+        self._detail_id = contact_id
+        self._load_detail(contact_id, new_contact=True)
+        self._stack.setCurrentIndex(1)
+
+    def _show_list(self) -> None:
+        """← Retour : la liste, avec sa recherche et sa sélection."""
+        self._stack.setCurrentIndex(0)
+        self.contacts_table.setFocus()
+
+    def _load_detail(self, contact_id: int, new_contact: bool = False) -> None:
+        contact = self._contact(contact_id)
+        balance = contact.balance_cents if contact else 0
+        contact_name = contact.name if contact else ""
+        if contact is not None and contact.phone:
+            contact_name += f"      ☎ {contact.phone}"
         with session_scope() as session:
             if self._mode == "resellers":
                 movements = list_movements(session, reseller_id=contact_id)
                 payments = list_reseller_payments(session, contact_id)
-                # Solde actuel
-                reseller = next((c for c in self._contacts if c.id == contact_id), None)
-                balance = reseller.balance_cents if reseller else 0
             else:
                 movements = list_movements(session, supplier_id=contact_id)
                 payments = list_supplier_payments(session, contact_id)
-                supplier = next((c for c in self._contacts if c.id == contact_id), None)
-                balance = supplier.balance_cents if supplier else 0
 
             mvt_rows = []
             for m in movements:
@@ -310,7 +344,7 @@ class ContactsPage(QWidget):
 
         self._detail_panel.load(
             contact_name, mvt_rows, pay_rows, balance,
-            refresh_cb=lambda: self._load_detail(contact_id, contact_name),
+            refresh_cb=lambda: self._load_detail(contact_id),
             global_refresh_cb=self.stock_changed.emit,
             new_contact=new_contact,
         )
@@ -335,7 +369,7 @@ class ContactsPage(QWidget):
                 QMessageBox.warning(self, "Erreur", str(e))
 
     def _on_edit(self, contact_id: int) -> None:
-        contact = next((c for c in self._contacts if c.id == contact_id), None)
+        contact = self._contact(contact_id)
         if contact is None:
             return
         dialog = _ContactDialog(self._mode, contact=contact, parent=self)
@@ -366,13 +400,14 @@ class ContactsPage(QWidget):
                 deactivate_reseller(session, contact_id)
             else:
                 deactivate_supplier(session, contact_id)
-        if self._selected_id == contact_id:
-            self._selected_id = None
+        if self._detail_id == contact_id:
+            self._detail_id = None
             self._detail_panel.clear()
+            self._show_list()
         self.refresh()
 
     def _on_versement(self, contact_id: int) -> None:
-        contact = next((c for c in self._contacts if c.id == contact_id), None)
+        contact = self._contact(contact_id)
         if contact is None:
             return
         dlg = _VersementDialog(contact.name, contact.balance_cents, mode=self._mode, parent=self)
@@ -388,7 +423,7 @@ class ContactsPage(QWidget):
                 QMessageBox.warning(self, "Erreur", str(e))
 
     def _on_adjust(self, supplier_id: int) -> None:
-        contact = next((c for c in self._contacts if c.id == supplier_id), None)
+        contact = self._contact(supplier_id)
         if contact is None:
             return
         dlg = _VersementDialog(
@@ -541,7 +576,7 @@ class _DetailPanel(QWidget):
         header_row = QHBoxLayout()
         header_row.setContentsMargins(16, 10, 16, 10)
         self._header = QLabel("Sélectionnez un contact pour voir ses mouvements")
-        self._header.setStyleSheet("font-size: 13px; font-weight: 600; color: #374151;")
+        self._header.setStyleSheet("font-size: 17px; font-weight: 700; color: #0f172a;")
         header_row.addWidget(self._header)
         header_row.addStretch()
         self._balance_badge = QLabel("")
@@ -676,7 +711,8 @@ class _DetailPanel(QWidget):
         retour à la page 1 (un simple rafraîchissement les garde)."""
         self._refresh_cb = refresh_cb
         self._global_refresh_cb = global_refresh_cb
-        self._header.setText(f"Historique — {contact_name}  ({len(mvt_rows)} mouvement(s))")
+        self._header.setText(contact_name)
+        self._tabs.setTabText(0, f"Mouvements stock ({len(mvt_rows)})" if mvt_rows else "Mouvements stock")
 
         color = _balance_color(balance)
         label = "Solde" if self._mode == "resellers" else "Dette"
