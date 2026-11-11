@@ -14,6 +14,7 @@ from app.database import init_engine
 from app.single_instance import notify_running_instance, start_listening
 from app.ui.login_dialog import LoginDialog
 from app.ui.main_window import MainWindow
+from app.ui.widgets import install_wheel_guard
 
 UI_DIR = Path(__file__).resolve().parent / "app" / "ui"
 STYLE_PATH = UI_DIR / "style.qss"
@@ -64,6 +65,7 @@ def main() -> int:
     # Fusion applique fidèlement toute la feuille de style sur toutes les
     # plateformes.
     app.setStyle("Fusion")
+    install_wheel_guard(app)  # la molette ne change plus les prix / quantités
     app.setStyleSheet(_load_stylesheet())
 
     login = LoginDialog()

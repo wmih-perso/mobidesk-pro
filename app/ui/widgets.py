@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QAbstractSpinBox,
+    QApplication,
+    QComboBox,
     QLineEdit,
     QDoubleSpinBox,
     QFrame,
@@ -96,6 +99,34 @@ class _ModernStepperMixin:
         self._increment_button.setStyleSheet(
             _STEPPER_BUTTON_STYLE + "QPushButton { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }"
         )
+
+
+class WheelGuard(QObject):
+    """Filtre installé sur toute l'application : la molette de la souris
+    ne change jamais la valeur d'un champ +/− (prix, quantité) ni d'une
+    liste déroulante. Passer la souris sur une fiche en faisant défiler
+    modifiait les prix sans qu'on s'en rende compte ; la molette fait
+    maintenant défiler la fenêtre, comme partout ailleurs."""
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 — signature imposée par Qt
+        if event.type() == QEvent.Type.Wheel:
+            target = obj if isinstance(obj, (QAbstractSpinBox, QComboBox)) else None
+            if target is None and isinstance(obj.parent(), QAbstractSpinBox):
+                target = obj.parent()  # le champ texte interne d'un QSpinBox
+            if target is not None:
+                # Défilement de la zone qui contient le champ (fiche, page…).
+                parent = target.parentWidget()
+                while parent is not None and not isinstance(parent, QAbstractScrollArea):
+                    parent = parent.parentWidget()
+                if parent is not None:
+                    QApplication.sendEvent(parent.viewport(), event)
+                return True
+        return False
+
+
+def install_wheel_guard(app: QApplication) -> None:
+    app._wheel_guard = WheelGuard(app)  # gardé en vie avec l'application
+    app.installEventFilter(app._wheel_guard)
 
 
 class ModernSpinBox(_ModernStepperMixin, QSpinBox):
