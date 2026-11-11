@@ -244,8 +244,18 @@ async def sync_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("Synchronisation Backblaze impossible")
 
 
+async def initial_sync(_app: Application) -> None:
+    """Première synchronisation dès que le bot est prêt (une tâche planifiée
+    « dans 1 seconde » pouvait être sautée si la connexion à Telegram
+    prenait plus de temps)."""
+    try:
+        await asyncio.to_thread(sync.check)
+    except Exception:
+        log.exception("Synchronisation Backblaze impossible")
+
+
 def main() -> None:
-    app = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).build()
+    app = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).post_init(initial_sync).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(on_auth_button, pattern=r"^auth:"))
     app.add_handler(CommandHandler(["aide", "help"], cmd_help))
@@ -258,7 +268,7 @@ def main() -> None:
     app.add_handler(CommandHandler("utilisateurs", cmd_users))
     app.add_handler(CommandHandler("retirer", cmd_remove))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    app.job_queue.run_repeating(sync_job, interval=SYNC_SECONDS, first=1)
+    app.job_queue.run_repeating(sync_job, interval=SYNC_SECONDS, first=SYNC_SECONDS)
     log.info("Bot MobiDesk démarré")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
