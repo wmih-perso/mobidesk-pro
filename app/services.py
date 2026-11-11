@@ -1519,6 +1519,31 @@ def record_supplier_payment(
     )
 
 
+def set_reseller_balance(
+    session: Session, reseller_id: int, balance_cents: int, note: str = ""
+) -> ResellerPayment:
+    """Ajustement manuel (admin) : fixe directement ce que le revendeur
+    doit. L'écart est gardé dans l'historique des versements."""
+    reseller = get_reseller(session, reseller_id)
+    if balance_cents == reseller.balance_cents:
+        raise StockError("Le solde est déjà à ce montant.")
+    from app import session as _session
+
+    payment = ResellerPayment(
+        reseller_id=reseller.id,
+        kind="adjust",
+        amount_cents=reseller.balance_cents - balance_cents,
+        balance_before_cents=reseller.balance_cents,
+        balance_after_cents=balance_cents,
+        note=(note or "Ajustement du solde").strip(),
+        cashier_name=_session.get_current_cashier_name(),
+    )
+    reseller.balance_cents = balance_cents
+    session.add(payment)
+    session.flush()
+    return payment
+
+
 def set_supplier_balance(
     session: Session, supplier_id: int, balance_cents: int, note: str = ""
 ) -> SupplierPayment:

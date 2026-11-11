@@ -46,6 +46,7 @@ from app.services import (
     list_suppliers,
     record_reseller_payment,
     record_supplier_payment,
+    set_reseller_balance,
     set_supplier_balance,
     update_payment,
     update_reseller,
@@ -162,7 +163,7 @@ class ContactsPage(QWidget):
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.contacts_table.setColumnWidth(
-            4, 210 if self._mode == "suppliers" and _session.is_admin() else 175
+            4, 210 if _session.is_admin() else 175
         )
 
         self.contacts_table.cellDoubleClicked.connect(self._on_row_double_clicked)
@@ -193,7 +194,7 @@ class ContactsPage(QWidget):
         pay_btn = QPushButton("💰  Versement")
         pay_btn.clicked.connect(lambda: self._detail_id and self._on_versement(self._detail_id))
         top_row.addWidget(pay_btn)
-        if self._mode == "suppliers" and _session.is_admin():
+        if _session.is_admin():
             adjust_btn = QPushButton("⚖  Ajuster le solde")
             adjust_btn.setObjectName("SecondaryButton")
             adjust_btn.clicked.connect(lambda: self._detail_id and self._on_adjust(self._detail_id))
@@ -262,9 +263,7 @@ class ContactsPage(QWidget):
             bal_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.contacts_table.setItem(i, 3, bal_item)
 
-            adjust_cb = (
-                self._on_adjust if self._mode == "suppliers" and _session.is_admin() else None
-            )
+            adjust_cb = self._on_adjust if _session.is_admin() else None
             actions = _contact_action_cell(c.id, c.balance_cents,
                                            edit_cb=self._on_edit,
                                            delete_cb=self._on_delete,
@@ -469,7 +468,10 @@ class ContactsPage(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 with session_scope() as session:
-                    set_supplier_balance(session, supplier_id, dlg.amount_cents, dlg.note)
+                    if self._mode == "resellers":
+                        set_reseller_balance(session, supplier_id, dlg.amount_cents, dlg.note)
+                    else:
+                        set_supplier_balance(session, supplier_id, dlg.amount_cents, dlg.note)
                 self.refresh()
             except StockError as e:
                 QMessageBox.warning(self, "Erreur", str(e))
@@ -879,7 +881,7 @@ class _DetailPanel(QWidget):
         edit_btn = QPushButton("✏")
         edit_btn.setObjectName("IconButton")
         edit_btn.setFixedSize(28, 28)
-        edit_btn.setToolTip("Modifier le montant, la date ou la note")
+        edit_btn.setToolTip("Modifier le montant ou la note")
         edit_btn.setStyleSheet("padding: 0; font-size: 12px;")
         edit_btn.clicked.connect(lambda _c, m=meta: self.payment_edit_cb(m))
         row.addWidget(edit_btn)
@@ -979,7 +981,11 @@ class _VersementDialog(FramelessDialog):
             self._amount_spin.setRange(-999_999_999, 999_999_999)
             self._amount_spin.setValue(cents_to_da(balance_cents))
             form.addRow("Montant dû *", self._amount_spin)
-            hint = QLabel("Ce que vous devez au fournisseur (négatif = il vous doit).")
+            hint = QLabel(
+                "Ce que vous devez au fournisseur (négatif = il vous doit)."
+                if mode == "suppliers" else
+                "Ce que le revendeur vous doit (négatif = vous lui devez)."
+            )
             hint.setStyleSheet("color: #64748b; font-size: 11px;")
             form.addRow("", hint)
         else:
@@ -1040,19 +1046,17 @@ class _VersementDialog(FramelessDialog):
 
 
 class _PaymentEditDialog(FramelessDialog):
-    """Modifier un versement : montant, date et heure, note."""
+    """Modifier un versement : montant et note (la date ne change pas)."""
 
     def __init__(self, amount_cents: int, created_at, note: str, parent=None) -> None:
         super().__init__(parent)
-        from PySide6.QtCore import QDateTime
-        from PySide6.QtWidgets import QDateTimeEdit
-
         from app.money import cents_to_da, da_to_cents
         from app.ui.widgets import ModernDoubleSpinBox
 
         self.setModal(True)
         self.setMinimumWidth(420)
         self._da_to_cents = da_to_cents
+        self._created_at = created_at
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -1074,17 +1078,12 @@ class _PaymentEditDialog(FramelessDialog):
         self._amount.setFixedHeight(36)
         self._amount.setValue(cents_to_da(amount_cents))
         form.addRow("Montant *", self._amount)
-        self._date = QDateTimeEdit(QDateTime(created_at))
-        self._date.setDisplayFormat("dd/MM/yyyy  HH:mm")
-        self._date.setCalendarPopup(True)
-        self._date.setFixedHeight(36)
-        form.addRow("Date et heure", self._date)
         self._note = QLineEdit(note)
         self._note.setPlaceholderText("Ex : espèces, chèque n°… (optionnel)")
         form.addRow("Note", self._note)
         layout.addLayout(form)
-        hint = QLabel("La dette est corrigée de la différence de montant. "
-                      "Changer la date ne change aucun montant.")
+        hint = QLabel(f"Versement du {created_at:%d/%m/%Y à %H:%M}. "
+                      "La dette est corrigée de la différence de montant.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #64748b; font-size: 11px;")
         layout.addWidget(hint)
@@ -1102,7 +1101,7 @@ class _PaymentEditDialog(FramelessDialog):
 
     def _accept(self) -> None:
         self.amount_cents = self._da_to_cents(self._amount.value())
-        self.created_at = self._date.dateTime().toPython().replace(second=0, microsecond=0)
+        self.created_at = self._created_at  # la date ne change pas
         self.note = self._note.text().strip()
         self.accept()
 

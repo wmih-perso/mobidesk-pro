@@ -147,6 +147,16 @@ def _migrate_resellers_schema(engine) -> None:
             connection.exec_driver_sql(
                 "ALTER TABLE resellers ADD COLUMN balance_cents INTEGER NOT NULL DEFAULT 0"
             )
+        # Versement ou ajustement du solde (v2.4.27) — table créée par
+        # create_all si absente ; on ajoute la colonne aux anciennes tables.
+        payment_columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(reseller_payments)").fetchall()
+        }
+        if payment_columns and "kind" not in payment_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE reseller_payments ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'payment'"
+            )
         connection.commit()
 
 

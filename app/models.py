@@ -273,6 +273,8 @@ class ResellerPayment(Base):
     reseller_id: Mapped[int] = mapped_column(ForeignKey("resellers.id"), index=True)
     reseller: Mapped["Reseller"] = relationship()
 
+    # "payment" (versement) ou "adjust" (solde corrigé par l'administrateur).
+    kind: Mapped[str] = mapped_column(String(20), default="payment", server_default="payment")
     amount_cents: Mapped[int]
     balance_before_cents: Mapped[int] = mapped_column(default=0)
     balance_after_cents: Mapped[int] = mapped_column(default=0)

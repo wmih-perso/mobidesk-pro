@@ -77,3 +77,19 @@ def test_supplier_payment_edit_and_adjustment_is_protected(db_session):
         update_payment(db, "suppliers", adj.id, amount_cents=1, created_at=adj.created_at)
     with pytest.raises(StockError):
         update_payment(db, "suppliers", p.id, amount_cents=0, created_at=p.created_at)
+
+
+def test_reseller_balance_adjustment(db_session):
+    from app.services import set_reseller_balance
+
+    db = db_session
+    r = create_reseller(db, name="Rezki")
+    r.balance_cents = 12500 * DA
+    adj = set_reseller_balance(db, r.id, 5000 * DA, "accord")
+    assert r.balance_cents == 5000 * DA
+    assert (adj.kind, adj.amount_cents, adj.balance_before_cents, adj.balance_after_cents) == (
+        "adjust", 7500 * DA, 12500 * DA, 5000 * DA)
+    with pytest.raises(StockError, match="ajustement"):
+        update_payment(db, "resellers", adj.id, amount_cents=1, created_at=adj.created_at)
+    with pytest.raises(StockError, match="déjà"):
+        set_reseller_balance(db, r.id, 5000 * DA)
