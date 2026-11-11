@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app import session as _session
+from app.timeutil import to_local
 from app.capital import compute_capital, current_stock_value_cents, start_capital_tracking
 from app.database import session_scope
 from app.money import da_to_cents, format_da
@@ -107,7 +108,7 @@ class CapitalPage(QWidget):
         self._clear()
         with session_scope() as session:
             report = compute_capital(session)
-            start_date = report.start.started_at.strftime("%d/%m/%Y") if report else ""
+            start_date = to_local(report.start.started_at).strftime("%d/%m/%Y") if report else ""
             created_by = report.start.created_by if report else ""
         self.restart_btn.setVisible(report is not None)
         if report is None:

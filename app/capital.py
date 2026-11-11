@@ -22,6 +22,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import CapitalStart, Display, Reseller, ReturnDoc, ReturnLine, StockBatch, StockMovement
+from app.timeutil import to_local
 from app.services import StockError, sum_profit_cents
 
 
@@ -142,6 +143,6 @@ def compute_capital(session: Session) -> CapitalReport | None:
         sold_cost_cents=sold_cost,
         customer_returns_cost_cents=customer_returns,
         supplier_refunds_cents=supplier_refunds,
-        profit_cents=sum_profit_cents(session, start=since),
+        profit_cents=sum_profit_cents(session, start=to_local(since)),
         reseller_debts_cents=debts,
     )

@@ -15,6 +15,7 @@ from app.labels import article_label
 from app.models import Display, StockMovement
 from app.money import format_balance_ticket, group_thousands
 from app.printer_config import PAPER_LABEL, PAPER_ROLL, PAPER_SHEET, load_printer_config, paper_description
+from app.timeutil import to_local
 from app.ticket_config import load_ticket_config
 
 
@@ -112,7 +113,7 @@ def _collect_ticket_data(batch_id: int | None, movement_id: int | None) -> dict 
         return {
             "ticket_num": ticket_num,
             "date_str": (
-                ticket_date.strftime("%d/%m/%Y  %H:%M")
+                to_local(ticket_date).strftime("%d/%m/%Y  %H:%M")
                 if ticket_date
                 else datetime.now().strftime("%d/%m/%Y  %H:%M")
             ),
@@ -182,7 +183,7 @@ def collect_return_data(return_id: int) -> dict | None:
         return {
             "doc_title": "BON DE RETOUR" + ("" if is_customer else " FOURNISSEUR"),
             "ticket_num": doc.id,
-            "date_str": doc.created_at.strftime("%d/%m/%Y  %H:%M"),
+            "date_str": to_local(doc.created_at).strftime("%d/%m/%Y  %H:%M"),
             "lines": lines,
             "total_brut_cents": doc.amount_cents,
             "remise_cents": 0,

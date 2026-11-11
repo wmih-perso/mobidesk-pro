@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.database import session_scope
 from app.money import format_da
+from app.timeutil import to_local
 from app.period import PERIOD_CHOICES, bounds_for_period
 from app.labels import article_label
 from app.services import list_sales, sum_expenses_cents, sum_return_deduction_cents
@@ -228,7 +229,7 @@ class ProfitTab(QWidget):
             sales = list_sales(session, start=start, end=end)
             self._current_rows = [
                 (
-                    m.created_at.strftime("%d/%m/%Y %H:%M"),
+                    to_local(m.created_at).strftime("%d/%m/%Y %H:%M"),
                     # Catégorie + modèle compatible, comme sur le ticket (ex. « AFF P20 LITE »).
                     article_label(m.display.category, m.display.phone_model, m.display.reference, m.model_label),
                     SALE_PRICE_TYPE_LABELS.get(m.sale_price_type, ""),

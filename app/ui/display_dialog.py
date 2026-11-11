@@ -32,6 +32,7 @@ from app.services import (
     list_categories,
     update_display,
 )
+from app.timeutil import to_local
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ModernDoubleSpinBox, ModernSpinBox
 
@@ -400,7 +401,7 @@ class DisplayDialog(FramelessDialog):
 
         lines = [
             f"•  {lot.supplier_name} — {lot.quantity_remaining} pièce(s) à {format_da(lot.unit_price_cents)}"
-            f"  ({lot.date:%d/%m/%Y})"
+            f"  ({to_local(lot.date):%d/%m/%Y})"
             for lot in lots
         ]
         text = "<br>".join(lines) if lines else "Aucun lot en stock."

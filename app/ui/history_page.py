@@ -57,6 +57,7 @@ class _ModernCombo(QComboBox):
         arrow_rect = rect.adjusted(rect.width() - 26, 0, 0, 0)
         painter.drawText(arrow_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "▾")
 
+from app.timeutil import to_local
 from app.database import session_scope
 from app.labels import article_label
 from app.money import format_da
@@ -78,6 +79,7 @@ MONTH_FR = [
 
 
 def _fmt_date(dt: datetime.datetime) -> str:
+    dt = to_local(dt)  # la base est en UTC
     return f"{dt.day:02d}/{MONTH_FR[dt.month - 1]}/{dt.year}  {dt.hour:02d}:{dt.minute:02d}"
 
 

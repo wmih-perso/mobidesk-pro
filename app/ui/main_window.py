@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from app.database import session_scope
 from app.locations import location_label, location_sort_key
 from app.money import cents_to_da, format_da
+from app.timeutil import to_local
 from app.paths import get_database_path, is_frozen
 from app.services import (
     StockError,
@@ -1779,7 +1780,7 @@ class MainWindow(QMainWindow):
 
             rows = [
                 (
-                    m.created_at.strftime("%d/%m/%Y %H:%M"),
+                    to_local(m.created_at).strftime("%d/%m/%Y %H:%M"),
                     m.display.reference,
                     "Entrée" if m.change_quantity > 0 else "Sortie",
                     m.quantity_before,

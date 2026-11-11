@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.locations import normalize_location
+from app.timeutil import to_local, to_utc
 from app.money import format_da
 from app.lot_pricing import refresh_wholesale_price, set_current_lot_wholesale
 from app.models import (
@@ -932,7 +933,8 @@ def list_sales(
     end: datetime.datetime | None = None,
 ) -> list[StockMovement]:
     """Mouvements de vente (is_sale=True) dans la période donnée, du plus
-    récent au plus ancien. `start`/`end` sont inclusifs si fournis."""
+    récent au plus ancien. `start`/`end` (heure locale) sont inclusifs."""
+    start, end = to_utc(start), to_utc(end)
     stmt = (
         select(StockMovement)
         .options(selectinload(StockMovement.display))
@@ -954,7 +956,9 @@ def list_sale_batches(
     date_to: datetime.datetime | None = None,
     sale_type_filter: str = "all",
 ) -> list[dict]:
-    """Retourne les ventes groupées par movement_batch_id (1 entrée = 1 vente)."""
+    """Retourne les ventes groupées par movement_batch_id (1 entrée = 1 vente).
+    `date_from` / `date_to` en heure locale."""
+    date_from, date_to = to_utc(date_from), to_utc(date_to)
     stmt = (
         select(StockMovement)
         .options(
@@ -1029,6 +1033,7 @@ def sum_return_deduction_cents(
     d'achat figés sur le bon de retour — voir app/returns.py)."""
     from app.models import ReturnDoc, ReturnLine
 
+    start, end = to_utc(start), to_utc(end)  # bornes en heure locale
     stmt = (
         select(
             func.sum(
@@ -1673,7 +1678,8 @@ def update_payment(
         _shift_balance_snapshots(session, kind, contact_id, payment.created_at, payment.id, shift)
         payment.amount_cents = amount_cents
     if created_at != payment.created_at:
-        changes.append(f"date {payment.created_at:%d/%m/%Y %H:%M} → {created_at:%d/%m/%Y %H:%M}")
+        changes.append(f"date {to_local(payment.created_at):%d/%m/%Y %H:%M} → "
+                       f"{to_local(created_at):%d/%m/%Y %H:%M}")
         payment.created_at = created_at
     note = (note or "").strip()
     if changes:

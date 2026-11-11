@@ -36,6 +36,7 @@ from app.returns import (
     set_customer_return_settlement,
 )
 from app.services import StockError
+from app.timeutil import to_local
 from app.ui.return_dialogs import CustomerReturnDialog, SettleExchangeDialog, SupplierReturnDialog
 from app.ui.widgets import EmptyState, add_clear_button, apply_card_shadow
 
@@ -214,7 +215,7 @@ class ReturnsPage(QWidget):
             rows = [
                 (
                     doc.id,
-                    doc.created_at.strftime("%d/%m/%Y  %H:%M"),
+                    to_local(doc.created_at).strftime("%d/%m/%Y  %H:%M"),
                     doc.kind,
                     contact_name(doc),
                     ", ".join(

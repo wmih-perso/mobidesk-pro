@@ -30,6 +30,7 @@ from app.database import session_scope
 from app.labels import article_label
 from app.money import format_balance, format_balance_ticket, format_da, format_supplier_balance
 from app.search import filter_and_rank, matches
+from app.timeutil import to_local
 from app.ui.frameless_dialog import FramelessDialog
 from app.ui.widgets import ALIGN_RIGHT, right_align_headers
 from app.services import (
@@ -308,7 +309,7 @@ class ContactsPage(QWidget):
                 is_entry = m.change_quantity > 0
                 unit_price = (m.unit_purchase_price_cents if is_entry else m.unit_sale_price_cents) or 0
                 qty = abs(m.change_quantity)
-                date = m.created_at.strftime("%d/%m/%Y %H:%M")
+                date = to_local(m.created_at).strftime("%d/%m/%Y %H:%M")
                 d = m.display
                 ref = d.reference if d else "—"
                 product = article_label(d.category, d.phone_model, d.reference, m.model_label) if d else "—"
@@ -337,7 +338,7 @@ class ContactsPage(QWidget):
             for p in payments:
                 is_adjust = getattr(p, "kind", "payment") == "adjust"
                 pay_rows.append((
-                    p.created_at.strftime("%d/%m/%Y %H:%M"),
+                    to_local(p.created_at).strftime("%d/%m/%Y %H:%M"),
                     "Ajustement" if is_adjust else format_da(p.amount_cents),
                     fmt(p.balance_before_cents),
                     fmt(p.balance_after_cents),
@@ -445,7 +446,7 @@ class ContactsPage(QWidget):
         payment_id, amount, created_at, _note, _adjust = meta
         confirm = QMessageBox.question(
             self, "Supprimer le versement",
-            f"Supprimer le versement de {format_da(amount)} du {created_at:%d/%m/%Y %H:%M} ?\n"
+            f"Supprimer le versement de {format_da(amount)} du {to_local(created_at):%d/%m/%Y %H:%M} ?\n"
             f"La dette remontera de {format_da(amount)}.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1082,7 +1083,7 @@ class _PaymentEditDialog(FramelessDialog):
         self._note.setPlaceholderText("Ex : espèces, chèque n°… (optionnel)")
         form.addRow("Note", self._note)
         layout.addLayout(form)
-        hint = QLabel(f"Versement du {created_at:%d/%m/%Y à %H:%M}. "
+        hint = QLabel(f"Versement du {to_local(created_at):%d/%m/%Y à %H:%M}. "
                       "La dette est corrigée de la différence de montant.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #64748b; font-size: 11px;")

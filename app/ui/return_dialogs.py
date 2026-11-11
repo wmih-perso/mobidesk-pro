@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.timeutil import to_local
 from app.database import session_scope
 from app.models import StockMovement
 from app.money import format_balance_ticket, format_da
@@ -59,7 +60,7 @@ _CHOICE_STYLE = (
 
 
 def _fmt_date(dt) -> str:
-    return dt.strftime("%d/%m/%Y  %H:%M")
+    return to_local(dt).strftime("%d/%m/%Y  %H:%M")
 
 
 def _make_table(headers: list[str], stretch_column: int) -> QTableWidget:
@@ -625,7 +626,7 @@ class SupplierReturnDialog(_ReturnDialogBase):
         for row, defective in enumerate(pending):
             _cell(table, row, 0, f"{defective.label}  ({defective.reference})")
             _cell(table, row, 1, defective.customer_name)
-            _cell(table, row, 2, defective.returned_at.strftime("%d/%m/%Y"))
+            _cell(table, row, 2, to_local(defective.returned_at).strftime("%d/%m/%Y"))
             _cell(table, row, 3, str(defective.remaining), right=True)
             _cell(table, row, 4, format_da(defective.unit_cost_cents), right=True)
             spin = _qty_spin(defective.remaining, self._update_summary)

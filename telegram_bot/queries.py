@@ -123,7 +123,8 @@ def sales(session: Session, word: str, admin: bool) -> str:
         start, end, local_start, local_end, label = period_bounds(word)
     except ValueError:
         return "Période inconnue. Exemples : <code>/ventes</code>, <code>/ventes hier</code>, <code>/ventes semaine</code>, <code>/ventes mois</code>"
-    moves = list_sales(session, start=start, end=end)
+    # Les calculs de MobiDesk prennent des bornes en heure locale.
+    moves = list_sales(session, start=local_start, end=local_end)
     tickets = {m.movement_batch_id or -m.id for m in moves}
     revenue = sum(m.unit_sale_price_cents * abs(m.change_quantity) for m in moves)
     pieces = sum(abs(m.change_quantity) for m in moves)
@@ -134,9 +135,9 @@ def sales(session: Session, word: str, admin: bool) -> str:
     ]
     if admin:
         gross = sum(m.profit_cents for m in moves)
-        returns = sum_return_deduction_cents(session, start=start, end=end)
+        returns = sum_return_deduction_cents(session, start=local_start, end=local_end)
         expenses = sum_expenses_cents(session, start=local_start, end=local_end)
-        net = sum_profit_cents(session, start=start, end=end)
+        net = sum_profit_cents(session, start=local_start, end=local_end)
         out.append(f"Bénéfice brut : <b>{da(gross)}</b>")
         if returns:
             out.append(f"− Retours : {da(returns)}")
@@ -222,7 +223,7 @@ def cash(session: Session, word: str = "") -> str:
     except ValueError:
         return "Période inconnue. Exemples : <code>/caisse</code>, <code>/caisse hier</code>"
     sale_batches = {}
-    for m in list_sales(session, start=start, end=end):
+    for m in list_sales(session, start=local_start, end=local_end):
         key = m.movement_batch_id or -m.id
         info = sale_batches.setdefault(key, {"total": 0, "versement": m.versement_cents, "reseller": m.reseller_id})
         info["total"] += m.unit_sale_price_cents * abs(m.change_quantity)

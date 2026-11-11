@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.timeutil import to_local
 from app.database import session_scope
 from app.money import format_da
 from app.services import list_repairs
@@ -113,7 +114,7 @@ class RepairsTab(QWidget):
             rows = [
                 (
                     r.id,
-                    r.created_at.strftime("%d/%m/%Y %H:%M"),
+                    to_local(r.created_at).strftime("%d/%m/%Y %H:%M"),
                     r.client_name,
                     r.client_phone,
                     f"{r.phone_brand} {r.phone_model}".strip(),
