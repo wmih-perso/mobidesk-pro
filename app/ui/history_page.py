@@ -213,6 +213,16 @@ class SaleBatchDetailDialog(FramelessDialog):
         )
         self._return_btn.clicked.connect(self._do_return)
         btn_row.addWidget(self._return_btn)
+        self._edit_btn = QPushButton("✏  Modifier la vente")
+        self._edit_btn.setStyleSheet(
+            "QPushButton { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; "
+            "border-radius: 6px; padding: 8px 14px; font-weight: 700; font-size: 12px; }"
+            "QPushButton:hover { background: #dbeafe; }"
+            "QPushButton:disabled { background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }"
+        )
+        self._edit_btn.setToolTip("Changer le prix ou la quantité (date et n° de ticket conservés)")
+        self._edit_btn.clicked.connect(self._do_edit)
+        btn_row.addWidget(self._edit_btn)
         btn_row.addStretch()
         close_btn = QPushButton("Fermer")
         close_btn.setObjectName("SecondaryButton")
@@ -243,6 +253,11 @@ class SaleBatchDetailDialog(FramelessDialog):
             _right(self._table, i, 5, str(already) if already else "—")
         remaining = sum(abs(m.change_quantity) - returned.get(m.id, 0) for m in movements)
         self._return_btn.setEnabled(remaining > 0)
+        # Une vente qui a déjà eu un retour ne se modifie plus (faire un retour).
+        has_returns = any(returned.values())
+        self._edit_btn.setEnabled(not has_returns)
+        if has_returns:
+            self._edit_btn.setToolTip("Cette vente a déjà eu un retour : utilisez « Faire un retour ».")
         if remaining == 0:
             self._return_btn.setText("✓ Tout a été rendu")
 
@@ -263,6 +278,14 @@ class SaleBatchDetailDialog(FramelessDialog):
         self._returns_section.setVisible(True)
         self._total_label.setText(f"{format_da(total - returned_cents)}  (net après retours)")
         self._total_label.setStyleSheet("font-weight: 800; font-size: 14px; color: #e65100;")
+
+    def _do_edit(self) -> None:
+        from app.ui.movement_edit_dialog import MovementEditDialog
+
+        dialog = MovementEditDialog(batch_id=self._batch["batch_id"], parent=self)
+        if dialog.exec() == MovementEditDialog.DialogCode.Accepted:
+            self.changed = True
+            self.accept()  # le détail affiché n'est plus à jour : la liste se rafraîchit
 
     def _do_return(self) -> None:
         from app.ui.return_dialogs import CustomerReturnDialog

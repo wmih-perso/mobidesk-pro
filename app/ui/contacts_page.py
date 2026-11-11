@@ -38,6 +38,7 @@ from app.services import (
     create_supplier,
     deactivate_reseller,
     deactivate_supplier,
+    delete_payment,
     list_movements,
     list_resellers,
     list_reseller_payments,
@@ -46,6 +47,7 @@ from app.services import (
     record_reseller_payment,
     record_supplier_payment,
     set_supplier_balance,
+    update_payment,
     update_reseller,
     update_supplier,
 )
@@ -198,6 +200,8 @@ class ContactsPage(QWidget):
             top_row.addWidget(adjust_btn)
         detail_layout.addLayout(top_row)
         self._detail_panel = _DetailPanel(mode=self._mode)
+        self._detail_panel.payment_edit_cb = self._on_edit_payment
+        self._detail_panel.payment_delete_cb = self._on_delete_payment
         detail_layout.addWidget(self._detail_panel, stretch=1)
         self._stack.addWidget(detail_page)
         back_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), detail_page)
@@ -340,6 +344,8 @@ class ContactsPage(QWidget):
                     fmt(p.balance_after_cents),
                     p.note or "—",
                     p.cashier_name or "—",
+                    # pour ✏ / 🗑 : (id, montant, date, note, ajustement ?)
+                    (p.id, p.amount_cents, p.created_at, p.note or "", is_adjust),
                 ))
 
         self._detail_panel.load(
@@ -421,6 +427,37 @@ class ContactsPage(QWidget):
                 self.refresh()
             except StockError as e:
                 QMessageBox.warning(self, "Erreur", str(e))
+
+    def _on_edit_payment(self, meta: tuple) -> None:
+        payment_id, amount, created_at, note, _adjust = meta
+        dlg = _PaymentEditDialog(amount, created_at, note, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            with session_scope() as session:
+                update_payment(session, self._mode, payment_id, amount_cents=dlg.amount_cents,
+                               created_at=dlg.created_at, note=dlg.note)
+        except StockError as e:
+            QMessageBox.warning(self, "Erreur", str(e))
+            return
+        self.refresh()
+
+    def _on_delete_payment(self, meta: tuple) -> None:
+        payment_id, amount, created_at, _note, _adjust = meta
+        confirm = QMessageBox.question(
+            self, "Supprimer le versement",
+            f"Supprimer le versement de {format_da(amount)} du {created_at:%d/%m/%Y %H:%M} ?\n"
+            f"La dette remontera de {format_da(amount)}.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            with session_scope() as session:
+                delete_payment(session, self._mode, payment_id)
+        except StockError as e:
+            QMessageBox.warning(self, "Erreur", str(e))
+            return
+        self.refresh()
 
     def _on_adjust(self, supplier_id: int) -> None:
         contact = self._contact(supplier_id)
@@ -562,6 +599,9 @@ class _DetailPanel(QWidget):
         self._global_refresh_cb = None
         self._all_mvt: list = []
         self._all_pay: list = []
+        # Modifier / supprimer un versement (administrateur), reliés par la page.
+        self.payment_edit_cb = None
+        self.payment_delete_cb = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(0)
@@ -671,9 +711,9 @@ class _DetailPanel(QWidget):
         search_row.addWidget(self._pay_search)
         vl.addLayout(search_row)
 
-        self._pay_table = QTableWidget(0, 6)
+        self._pay_table = QTableWidget(0, 7)
         self._pay_table.setHorizontalHeaderLabels(
-            ["Date", "Montant versé", "Solde avant", "Solde après", "Note", "Caissier"]
+            ["Date", "Montant versé", "Solde avant", "Solde après", "Note", "Caissier", ""]
         )
         self._pay_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._pay_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -689,6 +729,9 @@ class _DetailPanel(QWidget):
         ph.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         ph.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        ph.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self._pay_table.setColumnWidth(6, 76)
+        self._pay_table.setColumnHidden(6, not _session.is_admin())
         ph.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         right_align_headers(self._pay_table, (1, 2, 3))  # Montant versé, soldes
 
@@ -799,10 +842,11 @@ class _DetailPanel(QWidget):
 
     def _render_payments(self) -> None:
         query = self._pay_search.text()
-        rows = [r for r in self._all_pay if matches(query, *r)]
+        rows = [r for r in self._all_pay if matches(query, *r[:6])]
         self._pay_pager.update_state(len(rows), len(self._all_pay), "versement", bool(query.strip()))
         page_rows = self._pay_pager.slice(rows)
 
+        self._pay_table.setRowCount(0)  # retire aussi les boutons des lignes précédentes
         self._pay_table.setRowCount(len(page_rows))
         has_pay = bool(page_rows)
         self._pay_table.setVisible(has_pay)
@@ -811,7 +855,7 @@ class _DetailPanel(QWidget):
             "Aucun versement ne correspond à la recherche." if self._all_pay
             else "Aucun versement enregistré."
         )
-        for i, (date, amount, bal_before, bal_after, note, cashier) in enumerate(page_rows):
+        for i, (date, amount, bal_before, bal_after, note, cashier, meta) in enumerate(page_rows):
             self._pay_table.setItem(i, 0, QTableWidgetItem(date))
             amt_item = QTableWidgetItem(amount)
             amt_item.setForeground(Qt.GlobalColor.darkGreen)
@@ -823,6 +867,30 @@ class _DetailPanel(QWidget):
                 self._pay_table.setItem(i, column, balance_item)
             self._pay_table.setItem(i, 4, QTableWidgetItem(note))
             self._pay_table.setItem(i, 5, QTableWidgetItem(cashier))
+            if _session.is_admin() and not meta[4] and self.payment_edit_cb:
+                self._pay_table.setCellWidget(i, 6, self._payment_actions(meta))
+
+    def _payment_actions(self, meta: tuple) -> QWidget:
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background: transparent;")
+        row = QHBoxLayout(wrapper)
+        row.setContentsMargins(2, 2, 2, 2)
+        row.setSpacing(4)
+        edit_btn = QPushButton("✏")
+        edit_btn.setObjectName("IconButton")
+        edit_btn.setFixedSize(28, 28)
+        edit_btn.setToolTip("Modifier le montant, la date ou la note")
+        edit_btn.setStyleSheet("padding: 0; font-size: 12px;")
+        edit_btn.clicked.connect(lambda _c, m=meta: self.payment_edit_cb(m))
+        row.addWidget(edit_btn)
+        del_btn = QPushButton("🗑")
+        del_btn.setObjectName("IconButton")
+        del_btn.setFixedSize(28, 28)
+        del_btn.setToolTip("Supprimer ce versement (saisi par erreur)")
+        del_btn.setStyleSheet("padding: 0; font-size: 12px;")
+        del_btn.clicked.connect(lambda _c, m=meta: self.payment_delete_cb(m))
+        row.addWidget(del_btn)
+        return wrapper
 
     def _on_print(self, batch_id, movement_id) -> None:
         from app.ui.ticket_dialog import TicketPreviewDialog
@@ -968,6 +1036,74 @@ class _VersementDialog(FramelessDialog):
             return
         self.amount_cents = amount
         self.note = self._note_input.text().strip()
+        self.accept()
+
+
+class _PaymentEditDialog(FramelessDialog):
+    """Modifier un versement : montant, date et heure, note."""
+
+    def __init__(self, amount_cents: int, created_at, note: str, parent=None) -> None:
+        super().__init__(parent)
+        from PySide6.QtCore import QDateTime
+        from PySide6.QtWidgets import QDateTimeEdit
+
+        from app.money import cents_to_da, da_to_cents
+        from app.ui.widgets import ModernDoubleSpinBox
+
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self._da_to_cents = da_to_cents
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._make_header("✏  Modifier le versement"))
+        body = QWidget()
+        body.setStyleSheet("background: white;")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(24, 18, 24, 20)
+        layout.setSpacing(12)
+        root.addWidget(body)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._amount = ModernDoubleSpinBox()
+        self._amount.setRange(1, 999_999_999)
+        self._amount.setDecimals(0)
+        self._amount.setSuffix(" DA")
+        self._amount.setFixedHeight(36)
+        self._amount.setValue(cents_to_da(amount_cents))
+        form.addRow("Montant *", self._amount)
+        self._date = QDateTimeEdit(QDateTime(created_at))
+        self._date.setDisplayFormat("dd/MM/yyyy  HH:mm")
+        self._date.setCalendarPopup(True)
+        self._date.setFixedHeight(36)
+        form.addRow("Date et heure", self._date)
+        self._note = QLineEdit(note)
+        self._note.setPlaceholderText("Ex : espèces, chèque n°… (optionnel)")
+        form.addRow("Note", self._note)
+        layout.addLayout(form)
+        hint = QLabel("La dette est corrigée de la différence de montant. "
+                      "Changer la date ne change aucun montant.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #64748b; font-size: 11px;")
+        layout.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("✕  Annuler")
+        cancel.setObjectName("SecondaryButton")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        save = QPushButton("💾  Enregistrer")
+        save.clicked.connect(self._accept)
+        buttons.addWidget(save)
+        layout.addLayout(buttons)
+
+    def _accept(self) -> None:
+        self.amount_cents = self._da_to_cents(self._amount.value())
+        self.created_at = self._date.dateTime().toPython().replace(second=0, microsecond=0)
+        self.note = self._note.text().strip()
         self.accept()
 
 

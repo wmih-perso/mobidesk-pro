@@ -7,7 +7,7 @@ fonctionne pas de façon fiable sur l'exe distribué.
 
 from __future__ import annotations
 
-APP_VERSION = "2.4.25"
+APP_VERSION = "2.4.26"
 
 GITHUB_OWNER = "wmih-perso"
 GITHUB_REPO = "mobidesk-pro"

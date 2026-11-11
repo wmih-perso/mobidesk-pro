@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.locations import normalize_location
+from app.money import format_da
 from app.lot_pricing import refresh_wholesale_price, set_current_lot_wholesale
 from app.models import (
     Category, Display, Expense, LotAllocation, Repair, RepairItem, Reseller, ResellerPayment,
@@ -1551,6 +1552,122 @@ def _add_supplier_payment(
     session.add(payment)
     session.flush()
     return payment
+
+
+PaymentKind = Literal["resellers", "suppliers"]
+
+
+def _payment_tables(kind: PaymentKind):
+    if kind == "resellers":
+        return ResellerPayment, Reseller, ResellerPayment.reseller_id
+    return SupplierPayment, Supplier, SupplierPayment.supplier_id
+
+
+def _shift_balance_snapshots(
+    session: Session, kind: PaymentKind, contact_id: int, after: datetime.datetime,
+    exclude_payment_id: int, shift: int,
+) -> None:
+    """Corrige de `shift` les soldes figés (avant/après) de tout ce qui suit
+    `after` pour ce contact : versements, tickets de vente / d'achat, bons
+    de retour — pour qu'un ticket réimprimé affiche le bon solde."""
+    from sqlalchemy import update
+
+    from app.models import ReturnDoc
+
+    payment_model, _contact_model, contact_col = _payment_tables(kind)
+    session.flush()
+    session.execute(
+        update(payment_model)
+        .where(contact_col == contact_id, payment_model.created_at > after,
+               payment_model.id != exclude_payment_id)
+        .values(balance_before_cents=payment_model.balance_before_cents + shift,
+                balance_after_cents=payment_model.balance_after_cents + shift)
+        .execution_options(synchronize_session="fetch")
+    )
+    if kind == "resellers":
+        session.execute(
+            update(StockMovement)
+            .where(StockMovement.reseller_id == contact_id, StockMovement.is_sale.is_(True),
+                   StockMovement.created_at > after)
+            .values(reseller_balance_before_cents=StockMovement.reseller_balance_before_cents + shift)
+            .execution_options(synchronize_session="fetch")
+        )
+        doc_filter = (ReturnDoc.kind == "customer", ReturnDoc.reseller_id == contact_id)
+    else:
+        session.execute(
+            update(StockMovement)
+            .where(StockMovement.supplier_id == contact_id, StockMovement.change_quantity > 0,
+                   StockMovement.created_at > after)
+            .values(supplier_balance_before_cents=StockMovement.supplier_balance_before_cents + shift)
+            .execution_options(synchronize_session="fetch")
+        )
+        doc_filter = (ReturnDoc.kind == "supplier", ReturnDoc.supplier_id == contact_id)
+    session.execute(
+        update(ReturnDoc)
+        .where(*doc_filter, ReturnDoc.created_at > after)
+        .values(balance_before_cents=ReturnDoc.balance_before_cents + shift,
+                balance_after_cents=ReturnDoc.balance_after_cents + shift)
+        .execution_options(synchronize_session="fetch")
+    )
+
+
+def _get_payment(session: Session, kind: PaymentKind, payment_id: int):
+    payment_model, contact_model, _col = _payment_tables(kind)
+    payment = session.get(payment_model, payment_id)
+    if payment is None:
+        raise StockError("Ce versement n'existe plus.")
+    if getattr(payment, "kind", "payment") == "adjust":
+        raise StockError("Un ajustement de solde ne se modifie pas : faites un nouvel ajustement.")
+    contact_id = payment.reseller_id if kind == "resellers" else payment.supplier_id
+    return payment, session.get(contact_model, contact_id), contact_id
+
+
+def update_payment(
+    session: Session,
+    kind: PaymentKind,
+    payment_id: int,
+    *,
+    amount_cents: int,
+    created_at: datetime.datetime,
+    note: str = "",
+) -> None:
+    """Modifie un versement (revendeur ou fournisseur) : la dette est
+    corrigée de la différence, ainsi que les soldes figés de tout ce qui
+    suit. Changer la date ne change aucun montant."""
+    if amount_cents <= 0:
+        raise StockError("Le montant du versement doit être positif.")
+    payment, contact, contact_id = _get_payment(session, kind, payment_id)
+    from app import session as _session
+
+    changes = []
+    shift = payment.amount_cents - amount_cents  # > 0 : la dette remonte
+    if shift:
+        changes.append(f"{format_da(payment.amount_cents)} → {format_da(amount_cents)}")
+        contact.balance_cents += shift
+        payment.balance_after_cents = payment.balance_before_cents - amount_cents
+        _shift_balance_snapshots(session, kind, contact_id, payment.created_at, payment.id, shift)
+        payment.amount_cents = amount_cents
+    if created_at != payment.created_at:
+        changes.append(f"date {payment.created_at:%d/%m/%Y %H:%M} → {created_at:%d/%m/%Y %H:%M}")
+        payment.created_at = created_at
+    note = (note or "").strip()
+    if changes:
+        trace = (f"Modifié le {datetime.datetime.now():%d/%m/%Y} par "
+                 f"{_session.get_current_cashier_name() or '?'} ({', '.join(changes)})")
+        note = f"{note} · {trace}" if note else trace
+    payment.note = note[:255]
+    session.flush()
+
+
+def delete_payment(session: Session, kind: PaymentKind, payment_id: int) -> None:
+    """Supprime un versement saisi par erreur : la dette remonte du montant."""
+    payment, contact, contact_id = _get_payment(session, kind, payment_id)
+    contact.balance_cents += payment.amount_cents
+    _shift_balance_snapshots(
+        session, kind, contact_id, payment.created_at, payment.id, payment.amount_cents
+    )
+    session.delete(payment)
+    session.flush()
 
 
 def list_supplier_payments(session: Session, supplier_id: int) -> list[SupplierPayment]:

@@ -96,6 +96,8 @@ class MovementEditDialog(FramelessDialog):
             )
 
             self._initial_lines: list[tuple[int, str, int, int]] = []
+            # Coût d'achat unitaire déjà figé sur chaque ligne de la vente (E6)
+            self._cost_by_display = {m.display_id: m.unit_purchase_price_cents for m in movements}
             for m in movements:
                 ref = m.display.reference if m.display else f"id={m.display_id}"
                 brand = m.display.brand if m.display else ""
@@ -331,6 +333,47 @@ class MovementEditDialog(FramelessDialog):
     # Sauvegarde
     # ------------------------------------------------------------------
 
+    def _check_not_below_cost(self, lines: list[tuple[int, int, int]]) -> bool:
+        """E6 : refuse un prix (remise comprise) sous le coût d'achat. Lignes
+        existantes : coût figé de la vente ; produits ajoutés : coût FIFO."""
+        from app import session as _session
+        from app.lot_pricing import fifo_cost_for_quantity, lots_by_display
+
+        new_ids = [d for d, _q, _p in lines if d not in self._cost_by_display]
+        with session_scope() as session:
+            lots = lots_by_display(session, new_ids) if new_ids else {}
+            fallback = {
+                d.id: d.purchase_price_cents for d in list_displays(session) if d.id in new_ids
+            }
+        gross = sum(qty * price for _d, qty, price in lines)
+        ratio = (min(self._remise_cents / gross, 1.0)
+                 if self._uses_list_price and gross > 0 else 0.0)
+        below = []
+        for (display_id, qty, price), (_did, _spin, price_spin) in zip(lines, self._line_rows):
+            if display_id in self._cost_by_display:
+                cost = self._cost_by_display[display_id] * qty
+            else:
+                cost = fifo_cost_for_quantity(lots.get(display_id, []), qty, fallback.get(display_id, 0))
+            unit = round(price * (1 - ratio))
+            if unit * qty < cost:
+                price_spin.setStyleSheet(
+                    "QDoubleSpinBox { border: 2px solid #dc2626; border-radius: 4px; background: #fef2f2; }"
+                )
+                below.append((unit, cost // max(qty, 1)))
+            else:
+                price_spin.setStyleSheet("")
+        if not below:
+            return True
+        if _session.is_admin():
+            details = ", ".join(f"{format_da(u)} < coût {format_da(c)}" for u, c in below)
+            self._error_label.setText(f"⛔ Prix sous le coût d'achat ({details}). Corrigez le prix.")
+        else:
+            self._error_label.setText(
+                "⛔ Prix inférieur au coût d'achat (case en rouge). Corrigez le prix "
+                "ou demandez à l'administrateur."
+            )
+        return False
+
     def _on_save(self) -> None:
         if not self._line_rows:
             self._error_label.setText("Ajoutez au moins un produit.")
@@ -340,6 +383,8 @@ class MovementEditDialog(FramelessDialog):
             (did, spin.value(), da_to_cents(price.value()))
             for did, spin, price in self._line_rows
         ]
+        if self._is_sale and not self._check_not_below_cost(lines):
+            return
         if self._is_sale:
             if self._uses_list_price:
                 # Même remise (montant) répartie sur les nouveaux prix.
