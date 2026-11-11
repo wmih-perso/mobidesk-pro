@@ -205,6 +205,8 @@ class BackupPanel(QWidget):
                 auto = f"Automatique : <b style='color:#059669;'>activée à {config.get('hour', 20)}h00</b>"
                 if config.get("backup_on_close", True):
                     auto += " <b style='color:#059669;'>+ à la fermeture</b>"
+                if config.get("frequent_backup"):
+                    auto += " <b style='color:#059669;'>+ toutes les 15 min</b>"
             else:
                 auto = "Automatique : <b style='color:#b45309;'>désactivée</b>"
             self._summary_label.setText(f"{account}  ·  {auto}")
@@ -557,6 +559,12 @@ class BackupConfigDialog(FramelessDialog):
         )
         self._on_close_check.setChecked(bool(self._config.get("backup_on_close", True)))
         grid.addWidget(self._on_close_check, 7, 1)
+        self._frequent_check = QCheckBox(
+            "Sauvegarder aussi toutes les 15 minutes s'il y a eu des changements\n"
+            "(pour que le bot Telegram ait des données récentes)"
+        )
+        self._frequent_check.setChecked(bool(self._config.get("frequent_backup", False)))
+        grid.addWidget(self._frequent_check, 8, 1)
         layout.addLayout(grid)
 
         self._status_label = QLabel("")
@@ -613,6 +621,7 @@ class BackupConfigDialog(FramelessDialog):
             "keep_last": self._keep_spin.value(),
             "enabled": self._enabled_check.isChecked(),
             "backup_on_close": self._on_close_check.isChecked(),
+            "frequent_backup": self._frequent_check.isChecked(),
         }
 
     def _missing_fields(self, config: dict) -> list[str]:

@@ -44,3 +44,7 @@ installer/Output/
 # Divers
 *.tmp
 Thumbs.db
+
+# Bot Telegram : secrets et données du VPS
+telegram_bot/.env
+telegram_bot/data/

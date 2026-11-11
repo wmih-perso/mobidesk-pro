@@ -47,7 +47,7 @@ from app.services import (
     list_displays,
     list_movements,
 )
-from app.backup import is_backup_due, is_close_backup_due, load_backup_config
+from app.backup import is_backup_due, is_close_backup_due, is_frequent_backup_due, load_backup_config
 from app.ticket_config import load_ticket_config, save_ticket_config
 from app.ui.backup_panel import BackupPanel, ClosingBackupDialog, run_backup
 from app.ui.capital_page import CapitalPage
@@ -434,24 +434,34 @@ class MainWindow(QMainWindow):
         """Vérifie toutes les minutes si la sauvegarde du jour est due — et
         peu après le démarrage, pour rattraper une heure déjà passée."""
         self._backup_attempted_on: datetime.date | None = None
+        self._backup_running = False
         timer = QTimer(self)
         timer.timeout.connect(self._check_backup)
         timer.start(60_000)
         QTimer.singleShot(15_000, self._check_backup)
 
     def _check_backup(self) -> None:
+        if self._backup_running:
+            return
         now = datetime.datetime.now()
         config = load_backup_config()
         # Une seule tentative automatique par jour et par lancement : en cas
         # d'échec (pas d'internet...), on ne réessaie pas toutes les minutes.
-        if self._backup_attempted_on == now.date() or not is_backup_due(config, now):
+        daily = self._backup_attempted_on != now.date() and is_backup_due(config, now)
+        # Sauvegarde toutes les 15 minutes s'il y a eu des changements (bot
+        # Telegram) : silencieuse, réessayée au prochain passage si elle échoue.
+        frequent = not daily and is_frequent_backup_due(config, now)
+        if not daily and not frequent:
             return
-        self._backup_attempted_on = now.date()
+        if daily:
+            self._backup_attempted_on = now.date()
+        self._backup_running = True
 
         def _done(success: bool, message: str) -> None:
+            self._backup_running = False
             if hasattr(self, "backup_panel"):
                 self.backup_panel._refresh_last_backup()
-            if not success:
+            if not success and daily:
                 QMessageBox.warning(self, "Sauvegarde automatique", message)
 
         run_backup(_done, config=config)

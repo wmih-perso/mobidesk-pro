@@ -1,0 +1,11 @@
+# Bot Telegram MobiDesk — isolé du reste du VPS (aucun port ouvert).
+services:
+  mobidesk-bot:
+    build:
+      context: .
+      dockerfile: telegram_bot/Dockerfile
+    container_name: mobidesk-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data

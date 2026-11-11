@@ -121,10 +121,18 @@ def test_connection(config: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def _prune_old_backups(client, bucket: str, prefix: str, keep_last: int) -> None:
+    """Garde les `keep_last` sauvegardes les plus récentes, plus la dernière
+    de chaque jour : avec la sauvegarde toutes les 15 minutes, les 30
+    dernières ne couvriraient que quelques heures."""
     response = client.list_objects_v2(Bucket=bucket, Prefix=prefix)
     objects = response.get("Contents", [])
     objects.sort(key=lambda o: o["LastModified"], reverse=True)
-    for obj in objects[keep_last:]:
+    days_kept = set()
+    for index, obj in enumerate(objects):
+        day = obj["LastModified"].date()
+        if index < keep_last or day not in days_kept:
+            days_kept.add(day)
+            continue
         client.delete_object(Bucket=bucket, Key=obj["Key"])
 
 
@@ -299,6 +307,28 @@ def apply_pending_restore() -> Path | None:
     for old in sorted(_LOCAL_BACKUP_DIR.glob("stock_avant_recuperation_*.db"))[:-10]:
         old.unlink(missing_ok=True)
     return copy
+
+
+FREQUENT_BACKUP_MINUTES = 15
+
+
+def is_frequent_backup_due(config: dict, now: datetime.datetime) -> bool:
+    """Sauvegarde « toutes les 15 minutes » (pour le bot Telegram) : due si
+    l'option est cochée, que la base a changé depuis la dernière sauvegarde
+    réussie et que celle-ci date d'au moins 15 minutes."""
+    if not config.get("enabled") or not config.get("frequent_backup"):
+        return False
+    if not _has_credentials(config):
+        return False
+    last_success = config.get("last_success_at")
+    if not last_success:
+        return True
+    try:
+        last = datetime.datetime.fromisoformat(last_success)
+        modified = datetime.datetime.fromtimestamp(get_database_path().stat().st_mtime)
+    except (ValueError, OSError):
+        return True
+    return modified > last and now - last >= datetime.timedelta(minutes=FREQUENT_BACKUP_MINUTES)
 
 
 def is_close_backup_due(config: dict) -> bool:
